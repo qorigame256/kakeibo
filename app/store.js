@@ -21,7 +21,8 @@ const Store = (() => {
       categories: JSON.parse(JSON.stringify(DEFAULT_CATEGORIES)),
       budgets: {},
       recurring: [],
-      settings: { lastExport: null },
+      friends: [], // ランキングの友だちの成績（仕様書 D30）
+      settings: { lastExport: null, nickname: "", myId: null, shareAmount: "hidden" },
     };
   }
 
@@ -41,6 +42,7 @@ const Store = (() => {
         },
         budgets: d.budgets && typeof d.budgets === "object" ? d.budgets : {},
         recurring: Array.isArray(d.recurring) ? d.recurring : [],
+        friends: Array.isArray(d.friends) ? d.friends : [],
         settings: { ...base.settings, ...(d.settings || {}) },
       };
     } catch (e) {
@@ -78,6 +80,11 @@ const Store = (() => {
         const list = (incoming.categories?.[type] || []).filter((c) => c && typeof c.id === "string" && typeof c.name === "string");
         if (list.some((c) => !c.deleted)) data.categories[type] = list.map((c) => (c.deleted ? { id: c.id, name: c.name, deleted: true } : { id: c.id, name: c.name }));
       }
+      // ランキングの名前と id も引き継ぐ（id が変わると、友だちの端末で別の人として並んでしまうため）
+      const s = incoming.settings || {};
+      if (typeof s.myId === "string" && s.myId) data.settings.myId = s.myId;
+      if (typeof s.nickname === "string" && s.nickname) data.settings.nickname = s.nickname;
+      if (["exact", "rough", "hidden"].includes(s.shareAmount)) data.settings.shareAmount = s.shareAmount;
     }
     const have = new Set(data.entries.map((e) => e.id));
     for (const e of incoming.entries || []) {

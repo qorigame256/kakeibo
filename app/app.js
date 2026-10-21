@@ -1,8 +1,8 @@
-// 画面の切り替えと4つのタブ（入力・一覧・集計・設定）。
+// 画面の切り替えと5つのタブ（入力・一覧・集計・ランキング・設定）。
 const data = Store.load();
 const view = document.getElementById("view");
 const titleEl = document.getElementById("title");
-const TITLES = { input: "入力", list: "一覧", summary: "集計", settings: "設定" };
+const TITLES = { input: "入力", list: "一覧", summary: "集計", ranking: "ランキング", settings: "設定" };
 const TYPE_NAME = { expense: "支出", income: "収入" };
 const COLOR_SLOTS = 8; // 支出の分類のうち固定の色を持つのは先頭8つ
 
@@ -13,6 +13,7 @@ let catType = "expense"; // 設定の分類の切り替え
 let query = ""; // 一覧の検索欄
 let sumMode = "month"; // 集計の「月／年」
 let year = month.slice(0, 4); // 集計の「年」で表示している年
+let rankMetric = "streak"; // ランキングで見ている指標
 
 // ---------- 小道具 ----------
 function today() {
@@ -93,7 +94,7 @@ function render() {
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   titleEl.textContent = TITLES[tab];
   view.innerHTML = "";
-  ({ input: renderInput, list: renderList, summary: renderSummary, settings: renderSettings })[tab]();
+  ({ input: renderInput, list: renderList, summary: renderSummary, ranking: renderRanking, settings: renderSettings })[tab]();
 }
 
 // ---------- 入力の形（入力タブと修正の画面で共通） ----------
@@ -480,6 +481,146 @@ function budgetRow(name, used, budget) {
   </div>`);
 }
 
+// ---------- ランキングタブ（仕様書 D30） ----------
+const AMOUNT_NAME = { exact: "詳しく", rough: "大まかに", hidden: "見せない" };
+function shortDate(s) {
+  const [, m, d] = s.split("-").map(Number);
+  return `${m}月${d}日`;
+}
+// 指標の値を表示用の文字にする。rough は1万円単位に丸めた金額
+function metricText(metric, v, rough) {
+  const man = Math.round(Math.abs(v) / 10000);
+  switch (metric.key) {
+    case "streak": case "days": return `${v}日`;
+    case "save": case "budget": return `${v}%`;
+    case "cut": return v >= 0 ? `${v}% 減` : `${-v}% 増`;
+    case "expense": return rough ? (man ? `約${man}万円` : "1万円未満") : yen(v);
+    case "balance":
+      if (rough) return man ? `${v > 0 ? "+" : "−"}約${man}万円` : "±1万円未満";
+      return (v > 0 ? "+" : v < 0 ? "−" : "") + yen(Math.abs(v));
+  }
+}
+
+function renderRanking() {
+  const ctx = Ranking.context(today());
+  const mine = { ...Ranking.computeCard(data, today(), "exact"), name: data.settings.nickname || "あなた" };
+  const people = [{ me: true, card: mine }, ...data.friends.map((f) => ({ me: false, card: f }))];
+
+  const share = h(`<section class="card"><h2>知り合いと見せ合う</h2>
+    <p class="hint">自分の成績を「コード」にして LINE などで送り、相手から届いたコードを貼ると、ここに並びます。送るのは名前と指標の数字だけで、記録の中身は送りません。</p>
+    <div class="actions"><button class="btn" data-act="paste">コードを貼る</button><button class="btn primary" data-act="send">自分の成績を送る</button></div>
+  </section>`);
+  share.querySelector("[data-act=send]").addEventListener("click", openSendCard);
+  share.querySelector("[data-act=paste]").addEventListener("click", openPasteCode);
+  view.appendChild(share);
+
+  const metric = Ranking.METRICS.find((x) => x.key === rankMetric) || Ranking.METRICS[0];
+  const rsec = h(`<section class="card"><div class="chips metric-chips"></div><p class="hint"></p><ol class="rank-list"></ol></section>`);
+  for (const x of Ranking.METRICS) {
+    const b = h(`<button type="button" class="chip${x === metric ? " on" : ""}">${esc(x.label)}</button>`);
+    b.addEventListener("click", () => { rankMetric = x.key; render(); });
+    rsec.querySelector(".chips").appendChild(b);
+  }
+  const period = metric.period === "prev" ? ctx.p : metric.period === "month" ? ctx.m : null;
+  rsec.querySelector(".hint").textContent = metric.desc + (period ? `（${monthTitle(period)}の数字）` : "");
+  const ol = rsec.querySelector(".rank-list");
+  for (const r of Ranking.rank(people, metric, ctx)) {
+    ol.appendChild(h(`<li class="${r.me ? "me" : ""}">
+      <span class="rk-no${r.rank && r.rank <= 3 ? " top" + r.rank : ""}">${r.rank || "–"}</span>
+      <span class="rk-name"><span>${esc(r.card.name)}${r.me ? '<span class="tag">自分</span>' : ""}</span>${r.me ? "" : `<span class="rk-sub">${esc(shortDate(r.card.at))}の成績</span>`}</span>
+      <span class="rk-val">${r.value != null ? esc(metricText(metric, r.value, !r.me && r.card.amount === "rough")) : `<span class="muted">${esc(r.why)}</span>`}</span>
+    </li>`));
+  }
+  if (!data.friends.length) rsec.appendChild(h(`<p class="muted">まだ自分だけです。「自分の成績を送る」で知り合いに送り、相手にも送ってもらいましょう。</p>`));
+  view.appendChild(rsec);
+
+  if (data.friends.length) {
+    const fsec = h(`<section class="card"><h2>友だち（${data.friends.length}人）</h2><ul class="friend-list"></ul>
+      <p class="hint">数字を新しくするには、相手にもう一度コードを送ってもらって貼ります。</p></section>`);
+    for (const f of data.friends.slice().sort((a, b) => a.name.localeCompare(b.name, "ja"))) {
+      const li = h(`<li><span class="fl-name">${esc(f.name)}</span><span class="muted">${esc(shortDate(f.at))}の成績</span><button class="icon-btn del" aria-label="${esc(f.name)}を外す">✕</button></li>`);
+      li.querySelector("button").addEventListener("click", () => {
+        if (!confirm(`「${f.name}」をランキングから外しますか？`)) return;
+        data.friends.splice(data.friends.indexOf(f), 1);
+        save(); render();
+        toast("外しました");
+      });
+      fsec.querySelector("ul").appendChild(li);
+    }
+    view.appendChild(fsec);
+  }
+}
+
+// 送る前に、名前と自分の id を用意する（id は友だちの端末で同じ人だと分かるための乱数）
+function ensureProfile() {
+  if (!data.settings.myId) data.settings.myId = Store.newId();
+  if (!data.settings.nickname) {
+    const n = prompt(`ランキングに出す名前を決めてください（${Ranking.NAME_MAX}文字まで。あとで「設定」で変えられます）`);
+    if (!n || !n.trim()) { save(); return false; }
+    data.settings.nickname = n.trim().slice(0, Ranking.NAME_MAX);
+  }
+  save();
+  return true;
+}
+
+function openSendCard() {
+  if (!ensureProfile()) return;
+  const card = Ranking.computeCard(data, today(), data.settings.shareAmount);
+  const wrap = h(`<div><div class="sheet-head"><h2>送る内容</h2><button class="icon-btn" aria-label="閉じる">✕</button></div>
+    <p class="hint">名前「${esc(card.name)}」と、下の数字だけを送ります。金額の見せ方（いまは「${AMOUNT_NAME[card.amount]}」）は「設定」で変えられます。</p>
+    <ul class="legend"></ul>
+    <div class="actions"><button class="btn primary" data-act="share">送る</button></div></div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  for (const m of Ranking.METRICS) {
+    const v = card[m.key];
+    const text = m.money && card.amount === "hidden" ? "見せない" : v == null ? "記録が足りない" : metricText(m, v, card.amount === "rough");
+    wrap.querySelector("ul").appendChild(h(`<li><span class="lg-name">${esc(m.label)}</span><span class="lg-amt">${esc(text)}</span></li>`));
+  }
+  wrap.querySelector("[data-act=share]").addEventListener("click", () => shareCard(card, wrap));
+  openSheet(wrap);
+}
+
+async function shareCard(card, wrap) {
+  const text = `家計簿アプリのランキング用の成績です（${card.name}・${shortDate(card.at)}）\n` +
+    `アプリの「ランキング」→「コードを貼る」に、このメッセージをまるごと貼ってください。\n` +
+    `${Ranking.encode(card)}\nアプリ：${new URL("./", location.href).href}`;
+  // iPhone では共有シートが開き、LINE などを選べる
+  if (navigator.share) {
+    try { await navigator.share({ text }); closeSheet(); return; } catch (e) { if (e.name === "AbortError") return; }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    closeSheet();
+    toast("コピーしました。LINE などに貼って送ってください");
+    return;
+  } catch (e) { /* 下で手でコピーしてもらう */ }
+  if (!wrap.querySelector(".code-box")) {
+    const ta = h(`<textarea class="code-box" readonly aria-label="送る文章"></textarea>`);
+    ta.value = text;
+    wrap.appendChild(ta);
+    ta.select();
+  }
+  toast("下の文章を長押ししてコピーしてください");
+}
+
+function openPasteCode() {
+  const wrap = h(`<div><div class="sheet-head"><h2>コードを貼る</h2><button class="icon-btn" aria-label="閉じる">✕</button></div>
+    <p class="hint">友だちから届いたメッセージを、まるごと貼り付けてください。</p>
+    <textarea class="code-box" placeholder="ここを長押しして「ペースト」" aria-label="届いたコード"></textarea>
+    <div class="actions"><button class="btn primary" data-act="add">追加する</button></div></div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  wrap.querySelector("[data-act=add]").addEventListener("click", () => {
+    const card = Ranking.decode(wrap.querySelector(".code-box").value);
+    if (!card) return toast("コードが読み取れませんでした");
+    if (card.id === data.settings.myId) return toast("これは自分のコードです");
+    const r = Ranking.addFriend(data.friends, card, new Date().toISOString());
+    if (r === "older") return toast(`${card.name}さんのもっと新しい成績がもう入っています`);
+    save(); closeSheet(); render();
+    toast(r === "added" ? `${card.name}さんを追加しました` : `${card.name}さんの成績を新しくしました`);
+  });
+  openSheet(wrap);
+}
+
 // ---------- 設定タブ ----------
 function renderSettings() {
   // 分類
@@ -579,6 +720,27 @@ function renderSettings() {
   }
   paintSum();
   view.appendChild(bsec);
+
+  // ランキング
+  const nsec = h(`<section class="card"><h2>ランキング</h2>
+    <label class="field"><span>ランキングに出す名前</span><input name="nick" maxlength="${Ranking.NAME_MAX}" placeholder="未設定（送るときに聞きます）"></label>
+    <p class="field-label">金額（支出額・残ったお金）の見せ方</p>
+    <div class="seg2 small"><button data-a="exact">詳しく</button><button data-a="rough">大まかに</button><button data-a="hidden">見せない</button></div>
+    <p class="hint">「大まかに」は1万円単位に丸めて送ります。「見せない」にすると、金額のランキングには出ません。日数と割合はいつも送ります。変えたあとに送るコードから反映されます。</p>
+  </section>`);
+  const nick = nsec.querySelector("[name=nick]");
+  nick.value = data.settings.nickname || "";
+  nick.addEventListener("change", () => {
+    data.settings.nickname = nick.value.trim().slice(0, Ranking.NAME_MAX);
+    nick.value = data.settings.nickname;
+    save(); toast("名前を変えました");
+  });
+  nick.addEventListener("keydown", (e) => { if (e.key === "Enter") nick.blur(); });
+  nsec.querySelectorAll("[data-a]").forEach((b) => {
+    b.classList.toggle("on", b.dataset.a === data.settings.shareAmount);
+    b.addEventListener("click", () => { data.settings.shareAmount = b.dataset.a; save(); render(); });
+  });
+  view.appendChild(nsec);
 
   // バックアップ
   const last = data.settings.lastExport;
@@ -691,8 +853,9 @@ async function importData(f) {
   }
   if (!incoming || incoming.app !== "kakeibo" || !Array.isArray(incoming.entries)) return toast("家計簿の書き出しファイルではありません");
   const r = Store.merge(data, incoming);
+  const nf = Ranking.mergeFriends(data.friends, incoming.friends);
   save(); render();
-  toast(`${r.added} 件を足しました` + (r.skipped ? `（同じ記録 ${r.skipped} 件は飛ばしました）` : "") + (r.broken ? `　壊れた記録 ${r.broken} 件は読めませんでした` : ""));
+  toast(`${r.added} 件を足しました` + (r.skipped ? `（同じ記録 ${r.skipped} 件は飛ばしました）` : "") + (r.broken ? `　壊れた記録 ${r.broken} 件は読めませんでした` : "") + (nf ? `　友だち ${nf} 人` : ""));
 }
 
 render();

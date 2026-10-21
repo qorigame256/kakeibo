@@ -260,3 +260,28 @@ main {
 .rec-row.income .er-amt { color: var(--income); }
 .search { display: flex; align-items: center; gap: 6px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 0 10px; margin-bottom: 12px; color: var(--muted); }
 .search input { flex: 1; min-width: 0; border: 0; background: none; padding: 9px 0; font-size: 16px; outline: none; }
+
+/* ランキング */
+.metric-chips { margin-bottom: 4px; }
+.metric-chips .chip { font-size: 14px; padding: 5px 11px; min-height: 34px; }
+.metric-chips .chip.on { background: var(--accent); border-color: var(--accent); }
+.rank-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.rank-list li { display: flex; align-items: center; gap: 10px; padding: 9px 4px; border-top: 1px solid var(--line); }
+.rank-list li:first-child { border-top: 0; }
+.rank-list li.me { background: var(--track); border-radius: 10px; border-top-color: transparent; }
+.rank-list li.me + li { border-top-color: transparent; }
+.rk-no { width: 28px; height: 28px; flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: var(--text2); font-variant-numeric: tabular-nums; }
+.rk-no.top1 { background: #e3b100; color: #fff; }
+.rk-no.top2 { background: #9ea3a8; color: #fff; }
+.rk-no.top3 { background: #b9773e; color: #fff; }
+.rk-name { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.rk-sub { font-size: 12px; color: var(--muted); }
+.rk-val { flex: none; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.rk-val .muted { font-weight: 400; font-size: 13px; }
+.friend-list { list-style: none; margin: 0; padding: 0; }
+.friend-list li { display: flex; align-items: center; gap: 10px; padding: 2px 0; border-top: 1px solid var(--line); font-size: 15px; }
+.friend-list li:first-child { border-top: 0; }
+.friend-list .fl-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.friend-list .muted { font-size: 13px; }
+.code-box { display: block; width: 100%; min-height: 110px; margin-top: 8px; border: 1px solid var(--line); background: var(--card); border-radius: 9px; padding: 8px 10px; font: inherit; font-size: 14px; color: inherit; overflow-wrap: anywhere; }
+.field-label { font-size: 13px; color: var(--text2); margin: 12px 0 3px; }
