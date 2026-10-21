@@ -10,6 +10,9 @@ let tab = "input";
 let month = today().slice(0, 7); // 一覧と集計で共有する「表示している月」
 let draft = { type: "expense", date: today(), cat: null }; // 入力タブの続き
 let catType = "expense"; // 設定の分類の切り替え
+let query = ""; // 一覧の検索欄
+let sumMode = "month"; // 集計の「月／年」
+let year = month.slice(0, 4); // 集計の「年」で表示している年
 
 // ---------- 小道具 ----------
 function today() {
@@ -95,7 +98,9 @@ function render() {
 
 // ---------- 入力の形（入力タブと修正の画面で共通） ----------
 // init = { type, date, cat, amount, memo }。onSave(値) が true を返したら形を空に戻す
-function entryForm(init, { onSave, onDelete, saveLabel }) {
+// recurring: true のときは固定費の登録用（日付の代わりに「毎月◯日」と「額が変わる」を出す。init に day・variable）
+function entryForm(init, { onSave, onDelete, saveLabel, recurring }) {
+  const days = Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${i + 1}日</option>`).join("");
   const st = { ...init };
   const box = h(`<form class="entry" novalidate>
     <div class="seg2" role="radiogroup">
@@ -105,9 +110,13 @@ function entryForm(init, { onSave, onDelete, saveLabel }) {
     <label class="amount"><input name="amount" inputmode="numeric" autocomplete="off" placeholder="0" aria-label="金額"><span>円</span></label>
     <div class="chips" aria-label="分類"></div>
     <div class="row2">
-      <label class="field"><span>日付</span><input name="date" type="date" required></label>
+      ${recurring
+        ? `<label class="field"><span>毎月</span><select name="day">${days}</select></label>`
+        : '<label class="field"><span>日付</span><input name="date" type="date" required></label>'}
       <label class="field grow"><span>メモ</span><input name="memo" maxlength="100" placeholder="任意"></label>
     </div>
+    ${recurring ? `<label class="check"><input type="checkbox" name="variable"><span>毎月額が変わる（目安額で入れて「要確認」を付ける）</span></label>
+      <p class="hint">29〜31日を選ぶと、その日が無い月は月末に入ります。</p>` : ""}
     <div class="actions">
       ${onDelete ? '<button type="button" class="btn danger" data-act="delete">削除</button>' : ""}
       <button type="submit" class="btn primary">${saveLabel}</button>
@@ -117,7 +126,12 @@ function entryForm(init, { onSave, onDelete, saveLabel }) {
   const date = box.querySelector("[name=date]");
   const memo = box.querySelector("[name=memo]");
   amount.value = st.amount ? st.amount.toLocaleString("ja-JP") : "";
-  date.value = st.date;
+  if (recurring) {
+    box.querySelector("[name=day]").value = String(st.day || 1);
+    box.querySelector("[name=variable]").checked = !!st.variable;
+  } else {
+    date.value = st.date;
+  }
   memo.value = st.memo || "";
 
   function paint() {
@@ -157,8 +171,15 @@ function entryForm(init, { onSave, onDelete, saveLabel }) {
     const n = parseAmount(amount.value);
     if (n == null) { toast("金額を 1〜99,999,999 の数字で入れてください"); amount.focus(); return; }
     if (!st.cat) { toast("分類を選んでください"); return; }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date.value)) { toast("日付を入れてください"); return; }
-    const ok = onSave({ type: st.type, cat: st.cat, amount: n, date: date.value, memo: memo.value.trim() });
+    const v = { type: st.type, cat: st.cat, amount: n, memo: memo.value.trim() };
+    if (recurring) {
+      v.day = Number(box.querySelector("[name=day]").value);
+      v.variable = box.querySelector("[name=variable]").checked;
+    } else {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date.value)) { toast("日付を入れてください"); return; }
+      v.date = date.value;
+    }
+    const ok = onSave(v);
     if (ok) {
       amount.value = ""; memo.value = ""; st.cat = null;
       paint();
@@ -207,8 +228,8 @@ function entryRow(e, withDate) {
   const sign = e.type === "income" ? "+" : "";
   const row = h(`<button class="entry-row ${e.type}">
     <span class="dot" style="${e.type === "expense" ? `background:${expenseColor(e.cat)}` : "visibility:hidden"}"></span>
-    <span class="er-main"><span class="er-cat">${esc(catName(e.type, e.cat))}</span>${e.memo ? `<span class="er-memo">${esc(e.memo)}</span>` : ""}</span>
-    ${withDate ? `<span class="er-date">${esc(dayLabel(e.date))}</span>` : ""}
+    <span class="er-main"><span class="er-cat">${esc(catName(e.type, e.cat))}${e.check ? '<span class="tag warn">要確認</span>' : e.rec ? '<span class="tag">固定費</span>' : ""}</span>${e.memo ? `<span class="er-memo">${esc(e.memo)}</span>` : ""}</span>
+    ${withDate ? `<span class="er-date">${e.date.slice(0, 4) !== today().slice(0, 4) ? e.date.slice(0, 4) + "年" : ""}${esc(dayLabel(e.date))}</span>` : ""}
     <span class="er-amt">${sign}${yen(e.amount)}</span>
   </button>`);
   row.addEventListener("click", () => openEdit(e.id));
@@ -235,12 +256,14 @@ function openEdit(id) {
   if (!e) return;
   const wrap = h(`<div><div class="sheet-head"><h2>記録の修正</h2><button class="icon-btn" aria-label="閉じる">✕</button></div></div>`);
   wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  if (e.check) wrap.appendChild(h(`<p class="hint">固定費の目安額で入った記録です。実際の額に直して保存すると「要確認」が消えます。</p>`));
   wrap.appendChild(entryForm(
     { type: e.type, date: e.date, cat: e.cat, amount: e.amount, memo: e.memo },
     {
       saveLabel: "保存",
       onSave: (v) => {
         Object.assign(e, v);
+        delete e.check;
         save(); closeSheet(); render();
         toast("修正しました");
         return false;
@@ -283,11 +306,37 @@ function totalsRow(t) {
 
 // ---------- 一覧タブ ----------
 function renderList() {
-  view.appendChild(monthNav());
+  const search = h(`<label class="search"><span aria-hidden="true">⌕</span><input type="search" placeholder="メモ・分類名で探す（全期間）" aria-label="記録を探す" enterkeyhint="search"></label>`);
+  const input = search.querySelector("input");
+  input.value = query;
+  view.appendChild(search);
+  const body = h(`<div></div>`);
+  view.appendChild(body);
+  // 打つたびに下だけ描き直す（全体を描き直すと入力中の欄が消えてキーボードが閉じるため）
+  input.addEventListener("input", () => { query = input.value; paintList(body); });
+  paintList(body);
+}
+
+function paintList(body) {
+  body.innerHTML = "";
+  const q = query.trim().toLowerCase();
+  if (q) {
+    const hits = data.entries.filter((e) => e.memo.toLowerCase().includes(q) || catName(e.type, e.cat).toLowerCase().includes(q)).sort(byNewest);
+    body.appendChild(h(`<p class="hint">「${esc(query.trim())}」を含む記録 ${hits.length} 件</p>`));
+    body.appendChild(totalsRow(totals(hits)));
+    if (!hits.length) return body.appendChild(h(`<p class="empty">見つかりませんでした。</p>`));
+    const box = h(`<section class="day"></section>`);
+    for (const e of hits) box.appendChild(entryRow(e, true));
+    body.appendChild(box);
+    return;
+  }
+  body.appendChild(monthNav());
   const list = monthEntries(month).sort(byNewest);
-  view.appendChild(totalsRow(totals(list)));
+  body.appendChild(totalsRow(totals(list)));
+  const pending = list.filter((e) => e.check).length;
+  if (pending) body.appendChild(h(`<p class="notice">「要確認」の固定費が ${pending} 件あります。押して実際の額に直してください。</p>`));
   if (!list.length) {
-    view.appendChild(h(`<p class="empty">${monthTitle(month)}の記録はありません。</p>`));
+    body.appendChild(h(`<p class="empty">${monthTitle(month)}の記録はありません。</p>`));
     return;
   }
   let day = null, group = null;
@@ -296,16 +345,43 @@ function renderList() {
       day = e.date;
       const t = totals(list.filter((x) => x.date === day));
       group = h(`<section class="day"><h3><span>${dayLabel(day)}</span><span class="muted">${t.expense ? "支出 " + yen(t.expense) : ""}${t.income ? "　収入 " + yen(t.income) : ""}</span></h3></section>`);
-      view.appendChild(group);
+      body.appendChild(group);
     }
     group.appendChild(entryRow(e, false));
   }
 }
 
 // ---------- 集計タブ ----------
+function yearNav() {
+  const nav = h(`<div class="month-nav">
+    <button class="icon-btn" data-d="-1" aria-label="前の年">‹</button>
+    <span>${year}年</span>
+    <button class="icon-btn" data-d="1" aria-label="次の年">›</button>
+  </div>`);
+  nav.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { year = String(Number(year) + Number(b.dataset.d)); render(); }));
+  if (year !== today().slice(0, 4)) {
+    const back = h(`<button class="link">今年へ</button>`);
+    back.addEventListener("click", () => { year = today().slice(0, 4); render(); });
+    nav.appendChild(back);
+  }
+  return nav;
+}
+
 function renderSummary() {
-  view.appendChild(monthNav());
-  const list = monthEntries(month);
+  const isYear = sumMode === "year";
+  const seg = h(`<div class="seg2 small"><button data-m="month">月</button><button data-m="year">年</button></div>`);
+  seg.querySelectorAll("button").forEach((b) => {
+    b.classList.toggle("on", b.dataset.m === sumMode);
+    b.addEventListener("click", () => {
+      if (sumMode === b.dataset.m) return;
+      sumMode = b.dataset.m;
+      if (sumMode === "year") year = month.slice(0, 4); // 年へ切り替えたら、見ていた月の年を出す
+      render();
+    });
+  });
+  view.appendChild(seg);
+  view.appendChild(isYear ? yearNav() : monthNav());
+  const list = isYear ? data.entries.filter((e) => e.date.startsWith(year + "-")) : monthEntries(month);
   const t = totals(list);
   view.appendChild(totalsRow(t));
 
@@ -313,7 +389,26 @@ function renderSummary() {
   const byCat = new Map();
   for (const e of list) if (e.type === "expense") byCat.set(e.cat, (byCat.get(e.cat) || 0) + e.amount);
 
-  // 予算
+  if (!isYear) renderBudgets(byCat);
+  renderBreakdown(list, t, byCat, isYear ? "この年" : "この月");
+
+  // 推移の棒グラフ：月は選んでいる月までの12か月、年は1月〜12月
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    const key = isYear ? `${year}-${String(i + 1).padStart(2, "0")}` : shiftMonth(month, i - 11);
+    const tt = totals(monthEntries(key));
+    const m = Number(key.slice(5));
+    months.push({ key, label: !isYear && (m === 1 || i === 0) ? `${key.slice(2, 4)}/${m}` : String(m), title: monthTitle(key), ...tt });
+  }
+  const selected = isYear ? (today().startsWith(year) ? today().slice(0, 7) : `${year}-12`) : month;
+  const msec = h(`<section class="card"><h2>${isYear ? `月ごとの収入と支出（${year}年）` : "収入と支出の推移（12か月）"}</h2>
+    <div class="legend-inline"><span><i class="sw" style="background:var(--income)"></i>収入</span><span><i class="sw" style="background:var(--expense)"></i>支出</span></div>
+    <div class="bars-wrap"></div><p class="readout"></p></section>`);
+  view.appendChild(msec);
+  Charts.bars(msec.querySelector(".bars-wrap"), msec.querySelector(".readout"), months, selected, msec.querySelector("h2").textContent);
+}
+
+function renderBudgets(byCat) {
   const budgeted = activeCats("expense").filter((c) => data.budgets[c.id] > 0);
   const bsec = h(`<section class="card"><h2>予算の残り</h2></section>`);
   if (!budgeted.length) {
@@ -333,11 +428,13 @@ function renderSummary() {
     }
   }
   view.appendChild(bsec);
+}
 
-  // 内訳のドーナツ
+// 支出の内訳（ドーナツと表）と収入の内訳（表だけ）
+function renderBreakdown(list, t, byCat, periodName) {
   const dsec = h(`<section class="card"><h2>支出の内訳</h2></section>`);
   if (!t.expense) {
-    dsec.appendChild(h(`<p class="muted">この月の支出はありません。</p>`));
+    dsec.appendChild(h(`<p class="muted">${periodName}の支出はありません。</p>`));
   } else {
     const parts = [];
     let rest = 0, restN = 0;
@@ -371,20 +468,6 @@ function renderSummary() {
     });
     view.appendChild(isec);
   }
-
-  // 12か月の推移
-  const months = [];
-  for (let i = 11; i >= 0; i--) {
-    const key = shiftMonth(month, -i);
-    const tt = totals(monthEntries(key));
-    const m = Number(key.slice(5));
-    months.push({ key, label: m === 1 || i === 11 ? `${key.slice(2, 4)}/${m}` : String(m), title: monthTitle(key), ...tt });
-  }
-  const msec = h(`<section class="card"><h2>収入と支出の推移（12か月）</h2>
-    <div class="legend-inline"><span><i class="sw" style="background:var(--income)"></i>収入</span><span><i class="sw" style="background:var(--expense)"></i>支出</span></div>
-    <div class="bars-wrap"></div><p class="readout"></p></section>`);
-  view.appendChild(msec);
-  Charts.bars(msec.querySelector(".bars-wrap"), msec.querySelector(".readout"), months, month);
 }
 
 function budgetRow(name, used, budget) {
@@ -451,6 +534,27 @@ function renderSettings() {
   });
   view.appendChild(csec);
 
+  // 固定費
+  const rsec = h(`<section class="card"><h2>固定費（毎月）</h2>
+    <p class="hint">登録した日が来ると、アプリを開いたときに記録が自動で入ります。登録を変えたり消したりしても、もう入った記録はそのままです。</p>
+    <ul class="rec-list"></ul>
+    <div class="actions"><button class="btn" data-act="add-rec">＋ 固定費を足す</button></div>
+  </section>`);
+  const rl = rsec.querySelector(".rec-list");
+  const recs = data.recurring.slice().sort((a, b) => a.day - b.day);
+  if (!recs.length) rl.appendChild(h(`<li class="muted">まだありません。</li>`));
+  for (const r of recs) {
+    const li = h(`<li><button class="rec-row ${r.type}">
+      <span class="rr-day">${r.day}日</span>
+      <span class="er-main"><span class="er-cat">${esc(catName(r.type, r.cat))}${r.variable ? '<span class="tag">額が変わる</span>' : ""}</span>${r.memo ? `<span class="er-memo">${esc(r.memo)}</span>` : ""}</span>
+      <span class="er-amt">${r.type === "income" ? "+" : ""}${yen(r.amount)}</span>
+    </button></li>`);
+    li.querySelector("button").addEventListener("click", () => openRecurring(r.id));
+    rl.appendChild(li);
+  }
+  rsec.querySelector("[data-act=add-rec]").addEventListener("click", () => openRecurring(null));
+  view.appendChild(rsec);
+
   // 予算
   const bsec = h(`<section class="card"><h2>予算（毎月）</h2><p class="hint">支出の分類ごとに、毎月いくらまで使うかを入れます。空にすると予算なしになります。</p><ul class="budget-list"></ul><p class="b-sum"></p></section>`);
   const bl = bsec.querySelector(".budget-list");
@@ -489,6 +593,60 @@ function renderSettings() {
   ksec.querySelector("[data-act=import]").addEventListener("click", () => file.click());
   file.addEventListener("change", () => { if (file.files[0]) importData(file.files[0]); file.value = ""; });
   view.appendChild(ksec);
+}
+
+// 固定費の登録・変更（id が null なら新しく足す）
+function openRecurring(id) {
+  const r = id ? data.recurring.find((x) => x.id === id) : null;
+  const wrap = h(`<div><div class="sheet-head"><h2>${r ? "固定費の変更" : "固定費を足す"}</h2><button class="icon-btn" aria-label="閉じる">✕</button></div></div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  const next = h(`<p class="hint"></p>`);
+  wrap.appendChild(next);
+  const form = entryForm(
+    r ? { ...r } : { type: "expense", cat: null, amount: null, memo: "", day: Number(today().slice(8)), variable: false },
+    {
+      recurring: true,
+      saveLabel: r ? "保存" : "登録する",
+      onSave: (v) => {
+        // まだ来ていない日を選び直したときに、過ぎた月の分をさかのぼって入れないよう、次に入れる月は「今から最初に来る月」より前にしない
+        const first = Store.firstRecMonth(v.day, today());
+        if (r) {
+          Object.assign(r, v);
+          if (r.next < first) r.next = first;
+        } else {
+          data.recurring.push({ id: "r" + Store.newId(), ...v, next: first });
+        }
+        save(); closeSheet(); render();
+        toast(r ? "固定費を変えました" : `固定費を登録しました（最初は ${dayLabel(Store.recDate(first, v.day))}）`);
+        runRecurring(); // 今日の日を選んだときは、その場で入れる
+        return false;
+      },
+      onDelete: r ? () => {
+        if (!confirm(`固定費「${catName(r.type, r.cat)} ${yen(r.amount)}」の登録を消しますか？\nもう入っている記録は残ります。`)) return;
+        data.recurring.splice(data.recurring.indexOf(r), 1);
+        save(); closeSheet(); render();
+        toast("登録を消しました");
+      } : null,
+    }
+  );
+  // 選んだ日から「次に入る日」を出す
+  const daySel = form.querySelector("[name=day]");
+  const paintNext = () => {
+    const d = Number(daySel.value);
+    let key = Store.firstRecMonth(d, today());
+    if (r && r.next > key) key = r.next;
+    next.textContent = `次に入るのは ${monthTitle(key)}${dayLabel(Store.recDate(key, d)).replace(/^\d+月/, "")} です。`;
+  };
+  daySel.addEventListener("change", paintNext);
+  paintNext();
+  wrap.appendChild(form);
+  openSheet(wrap);
+}
+
+// 来た固定費を記録に入れる（開いたとき・アプリに戻ってきたとき）
+function runRecurring() {
+  const n = Store.applyRecurring(data, today());
+  if (n) { save(); render(); toast(`固定費を ${n} 件入れました`); }
 }
 
 function moveCat(c, d) {
@@ -538,6 +696,9 @@ async function importData(f) {
 }
 
 render();
+runRecurring();
+// ホーム画面のアプリは閉じずに裏へ回るだけのことが多いので、戻ってきたときにも確かめる
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") runRecurring(); });
 
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   navigator.serviceWorker.register("sw.js");

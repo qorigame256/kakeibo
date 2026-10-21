@@ -70,14 +70,14 @@ const Charts = (() => {
   }
 
   // 月ごとの収入・支出の棒：months = [{ key, label, income, expense }]。押した月の内訳を readout に出す
-  function bars(container, readout, months, selectedKey) {
+  function bars(container, readout, months, selectedKey, label) {
     container.innerHTML = "";
     const W = 340, H = 190, left = 34, right = 6, top = 10, bottom = 24;
     const pw = W - left - right, ph = H - top - bottom;
     const max = Math.max(1, ...months.map((m) => Math.max(m.income, m.expense)));
     const step = niceStep(max, 3);
     const yMax = Math.ceil(max / step) * step;
-    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "bars", role: "img", "aria-label": "直近12か月の収入と支出" });
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "bars", role: "img", "aria-label": label });
     for (let v = 0; v <= yMax; v += step) {
       const y = top + ph - (v / yMax) * ph;
       svg.appendChild(el("line", { x1: left, x2: W - right, y1: y, y2: y, class: v === 0 ? "axis" : "grid" }));
