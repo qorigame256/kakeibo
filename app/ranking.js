@@ -73,7 +73,8 @@ const Ranking = (() => {
     };
     if (card.amount === "hidden") { card.expense = null; card.balance = null; }
     if (card.amount === "rough") {
-      const r = (v) => (v == null ? null : Math.round(v / 10000) * 10000);
+      // 赤字も絶対値で四捨五入する（Math.round は −1.5 を −1 にするため、−15,000 円が −1 万円になってしまう）
+      const r = (v) => (v == null ? null : Math.sign(v) * Math.round(Math.abs(v) / 10000) * 10000 || 0);
       card.expense = r(card.expense); card.balance = r(card.balance);
     }
     return card;
@@ -106,7 +107,12 @@ const Ranking = (() => {
     const intOrNull = (v, lo, hi) => (v == null ? null : Number.isInteger(v) && v >= lo && v <= hi ? v : undefined);
     const name = typeof c.name === "string" ? c.name.trim().slice(0, NAME_MAX) : "";
     if (typeof c.id !== "string" || !/^[a-z0-9]{4,24}$/.test(c.id) || !name) return null;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(c.at) || !/^\d{4}-\d{2}$/.test(c.m) || !/^\d{4}-\d{2}$/.test(c.p)) return null;
+    // 送った日は実在する日で、明日（時差の分）より先でないこと。m・p は送った日の今月・先月であること
+    // （ありえない先の日付を受け入れると、その人の本物のコードがずっと「古い」と断られるため）
+    if (typeof c.at !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(c.at)) return null;
+    const [y, mo, d] = c.at.split("-").map(Number);
+    if (ymd(new Date(y, mo - 1, d)) !== c.at || c.at > ymd(new Date(Date.now() + 86400000))) return null;
+    if (c.m !== c.at.slice(0, 7) || c.p !== shift(c.m, -1)) return null;
     const out = {
       v: 1, id: c.id, name, at: c.at, m: c.m, p: c.p,
       streak: intOrNull(c.streak, 0, 100000), days: intOrNull(c.days, 0, 31),

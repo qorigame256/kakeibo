@@ -51,8 +51,11 @@ function parseAmount(s) {
   const n = Number(t);
   return n >= 1 && n <= 99999999 ? n : null;
 }
+// 失敗はすぐ後の「◯◯しました」の案内に上書きされないよう、閉じるまで残る alert で知らせる
 function save() {
-  if (!Store.save(data)) toast("保存できませんでした（端末の空きを確認してください）");
+  const ok = Store.save(data);
+  if (!ok) alert("保存できませんでした。端末の空きを確認してください。\n（いまの変更は、アプリを閉じると消えます）");
+  return ok;
 }
 let toastTimer = null;
 function toast(msg) {
@@ -199,7 +202,8 @@ function renderInput() {
       saveLabel: "記録する",
       onSave: (v) => {
         data.entries.push({ id: Store.newId(), ...v, createdAt: new Date().toISOString() });
-        save();
+        // 保存できなければ記録を取り消し、入力も残す（そのまま押し直せるように）
+        if (!save()) { data.entries.pop(); return false; }
         draft = { type: v.type, date: v.date, cat: null };
         toast(`${catName(v.type, v.cat)} ${yen(v.amount)}を記録しました`);
         renderRecent();
