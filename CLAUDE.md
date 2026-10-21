@@ -6,7 +6,7 @@
 ## 決まり
 
 - 記録は端末の中（localStorage）だけ。外部サービスへ送る機能を足すときは本人に確認する。
-- **保存の読み書きは `app/store.js` に閉じ込める。** あとで App Store 用に包むとき（仕様書 D1）に保存先を差し替える場所を1か所にするため。
+- **保存の読み書きは `app/store.js` に閉じ込める。** あとで App Store 用に包むとき（仕様書 D24）に保存先を差し替える場所を1か所にするため。
 - **分類の `id` を変えない・使い回さない。** 記録は `cat` の id で分類と結び付いている。分類の削除は `deleted: true` の印だけ（データから消すと過去の記録の分類名が出なくなる）。
 - 公開先は `https://qorigame256.github.io/kakeibo/`（リポジトリ `qorigame256/kakeibo`）。main へ push すると `.github/workflows/pages.yml` が `app/` だけを公開する。アカウント・作者・push の決まりは共通ルール「GitHub Pages で公開するとき」。
 - 動作確認は `.claude/launch.json` の `app`（`node tools/serve.js`、http://localhost:8766/。使用中なら自動で別の番号）をブラウザ画面で開き、iPhone 幅（375px）で見る。
