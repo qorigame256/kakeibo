@@ -22,7 +22,8 @@ const Store = (() => {
       budgets: {},
       recurring: [],
       friends: [], // ランキングの友だちの成績（仕様書 D30）
-      settings: { lastExport: null, nickname: "", myId: null, shareAmount: "hidden" },
+      skins: {}, // 手に入れたスキンと手に入れた日（仕様書 D31）
+      settings: { lastExport: null, nickname: "", myId: null, shareAmount: "hidden", skin: "basic", startedAt: null },
     };
   }
 
@@ -43,6 +44,7 @@ const Store = (() => {
         budgets: d.budgets && typeof d.budgets === "object" ? d.budgets : {},
         recurring: Array.isArray(d.recurring) ? d.recurring : [],
         friends: Array.isArray(d.friends) ? d.friends : [],
+        skins: d.skins && typeof d.skins === "object" && !Array.isArray(d.skins) ? d.skins : {},
         settings: { ...base.settings, ...(d.settings || {}) },
       };
     } catch (e) {
@@ -75,6 +77,7 @@ const Store = (() => {
     const t = new Date(y, m - 1, d);
     return t.getFullYear() === y && t.getMonth() === m - 1 && t.getDate() === d;
   }
+  const SKIN_ID = /^[a-z0-9-]{1,24}$/;
   const isMonth = (s) => typeof s === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(s);
   const isAmount = (v) => Number.isInteger(v) && v > 0 && v <= AMOUNT_MAX;
   const isCat = (c) => c && typeof c.id === "string" && typeof c.name === "string";
@@ -102,7 +105,16 @@ const Store = (() => {
       if (typeof s.myId === "string" && /^[a-z0-9]{4,24}$/.test(s.myId)) data.settings.myId = s.myId;
       if (typeof s.nickname === "string" && s.nickname) data.settings.nickname = s.nickname;
       if (["exact", "rough", "hidden"].includes(s.shareAmount)) data.settings.shareAmount = s.shareAmount;
+      if (typeof s.skin === "string" && SKIN_ID.test(s.skin)) data.settings.skin = s.skin; // 持っているかは画面側で確かめる
     }
+    // 手に入れたスキンは足し合わせ、使い始めた日は古いほうにする
+    if (incoming.skins && typeof incoming.skins === "object") {
+      for (const [id, d] of Object.entries(incoming.skins)) {
+        if (SKIN_ID.test(id) && isDate(d) && !data.skins[id]) data.skins[id] = d;
+      }
+    }
+    const started = incoming.settings?.startedAt;
+    if (isDate(started) && (!data.settings.startedAt || started < data.settings.startedAt)) data.settings.startedAt = started;
     const have = new Set(data.entries.map((e) => e.id));
     for (const e of arr(incoming.entries)) {
       if (!isEntry(e)) { result.broken++; continue; }

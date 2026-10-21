@@ -55,6 +55,7 @@ function parseAmount(s) {
 function save() {
   const ok = Store.save(data);
   if (!ok) alert("保存できませんでした。端末の空きを確認してください。\n（いまの変更は、アプリを閉じると消えます）");
+  else checkSkins();
   return ok;
 }
 let toastTimer = null;
@@ -253,6 +254,7 @@ function openSheet(content) {
 function closeSheet() {
   sheet.classList.remove("open");
   sheet.hidden = true; sheetBack.hidden = true;
+  setTimeout(showSkinNews, 300); // 開いていた画面のあいだに手に入れたスキンを、閉じてから知らせる
 }
 sheetBack.addEventListener("click", closeSheet);
 
@@ -511,7 +513,7 @@ function renderRanking() {
   const people = [{ me: true, card: mine }, ...data.friends.map((f) => ({ me: false, card: f }))];
 
   const share = h(`<section class="card"><h2>知り合いと見せ合う</h2>
-    <p class="hint">自分の成績を「コード」にして LINE などで送り、相手から届いたコードを貼ると、ここに並びます。送るのは名前と指標の数字だけで、記録の中身は送りません。</p>
+    <p class="hint">自分の成績を「コード」にして LINE などで送り、相手から届いたコードを貼ると、ここに並びます。送るのは名前と指標の数字と使っているスキンだけで、記録の中身は送りません。</p>
     <div class="actions"><button class="btn" data-act="paste">コードを貼る</button><button class="btn primary" data-act="send">自分の成績を送る</button></div>
   </section>`);
   share.querySelector("[data-act=send]").addEventListener("click", openSendCard);
@@ -531,7 +533,7 @@ function renderRanking() {
   for (const r of Ranking.rank(people, metric, ctx)) {
     ol.appendChild(h(`<li class="${r.me ? "me" : ""}">
       <span class="rk-no${r.rank && r.rank <= 3 ? " top" + r.rank : ""}">${r.rank || "–"}</span>
-      <span class="rk-name"><span>${esc(r.card.name)}${r.me ? '<span class="tag">自分</span>' : ""}</span>${r.me ? "" : `<span class="rk-sub">${esc(shortDate(r.card.at))}の成績</span>`}</span>
+      <span class="rk-name"><span>${skinDot(r.card.skin)}${esc(r.card.name)}${r.me ? '<span class="tag">自分</span>' : ""}</span>${r.me ? "" : `<span class="rk-sub">${esc(shortDate(r.card.at))}の成績${Skins.has(r.card.skin) ? `・${esc(Skins.get(r.card.skin).name)}` : ""}</span>`}</span>
       <span class="rk-val">${r.value != null ? esc(metricText(metric, r.value, !r.me && r.card.amount === "rough")) : `<span class="muted">${esc(r.why)}</span>`}</span>
     </li>`));
   }
@@ -571,7 +573,7 @@ function openSendCard() {
   if (!ensureProfile()) return;
   const card = Ranking.computeCard(data, today(), data.settings.shareAmount);
   const wrap = h(`<div><div class="sheet-head"><h2>送る内容</h2><button class="icon-btn" aria-label="閉じる">✕</button></div>
-    <p class="hint">名前「${esc(card.name)}」と、下の数字だけを送ります。金額の見せ方（いまは「${AMOUNT_NAME[card.amount]}」）は「設定」で変えられます。</p>
+    <p class="hint">名前「${esc(card.name)}」と、下の数字とスキンだけを送ります。金額の見せ方（いまは「${AMOUNT_NAME[card.amount]}」）は「設定」で変えられます。</p>
     <ul class="legend"></ul>
     <div class="actions"><button class="btn primary" data-act="share">送る</button></div></div>`);
   wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
@@ -580,6 +582,7 @@ function openSendCard() {
     const text = m.money && card.amount === "hidden" ? "見せない" : v == null ? "記録が足りない" : metricText(m, v, card.amount === "rough");
     wrap.querySelector("ul").appendChild(h(`<li><span class="lg-name">${esc(m.label)}</span><span class="lg-amt">${esc(text)}</span></li>`));
   }
+  wrap.querySelector("ul").appendChild(h(`<li><span class="lg-name">スキン</span><span class="lg-amt">${skinDot(card.skin)}${esc(Skins.get(card.skin).name)}</span></li>`));
   wrap.querySelector("[data-act=share]").addEventListener("click", () => shareCard(card, wrap));
   openSheet(wrap);
 }
@@ -625,8 +628,85 @@ function openPasteCode() {
   openSheet(wrap);
 }
 
+// ---------- スキン（仕様書 D31） ----------
+let skinNews = []; // 手に入れて、まだ知らせていないスキン
+function checkSkins() {
+  const got = Skins.check(data, today());
+  Store.save(data); // save() を通すとここへ戻ってくるので直接書く（使い始めた日もここで入る）
+  if (!got.length) return;
+  skinNews.push(...got);
+  setTimeout(showSkinNews, 0); // 「記録しました」などの案内のあとに出す
+}
+function skinDot(id) {
+  if (!Skins.has(id)) return "";
+  return `<span class="skin-dot" style="background:${Skins.colors(Skins.get(id)).accent}" aria-hidden="true"></span>`;
+}
+// スキンの見本（小さな画面の絵）
+function skinPreview(s) {
+  const c = Skins.colors(s);
+  return `<span class="sk-prev" style="background:${c.bg};border-color:${c.line}"><span style="background:${c.card};border-color:${c.line}"><i style="background:${c.accent}"></i><b style="background:${c.track}"></b></span></span>`;
+}
+function useSkin(id) {
+  data.settings.skin = id;
+  Skins.apply(id);
+  save();
+}
+// 手に入れたスキンを知らせる。ほかの画面が開いているときは、閉じたあとに出す（closeSheet から呼ばれる）
+function showSkinNews() {
+  if (!skinNews.length || !sheet.hidden) return;
+  const list = skinNews;
+  skinNews = [];
+  const wrap = h(`<div><div class="sheet-head"><h2>新しいスキンを手に入れました</h2><button class="icon-btn" aria-label="閉じる">✕</button></div>
+    <ul class="skin-news"></ul><p class="hint">スキンは「設定」でいつでも変えられます。</p></div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  for (const s of list) {
+    const li = h(`<li>${skinPreview(s)}<span class="sn-main"><b>${esc(s.name)}</b><span class="muted">${esc(s.cond || "")}</span></span><button class="btn primary">使う</button></li>`);
+    li.querySelector("button").addEventListener("click", () => {
+      useSkin(s.id);
+      closeSheet(); render();
+      toast(`スキンを「${s.name}」にしました`);
+    });
+    wrap.querySelector("ul").appendChild(li);
+  }
+  openSheet(wrap);
+}
+function renderSkins() {
+  const f = Skins.facts(data, today());
+  const sec = h(`<section class="card"><h2>スキン</h2><p class="hint">続けて記録したり、友だちと見せ合ったりすると増えます。押すと切り替わります。</p></section>`);
+  for (const [kind, label] of Skins.KINDS) {
+    // レアスキンは手に入れるまで並べない
+    const list = Skins.LIST.filter((s) => s.kind === kind && (!s.rare || Skins.owned(data, s.id)));
+    if (!list.length) continue;
+    const grid = h(`<div><p class="field-label">${esc(label)}</p><div class="skin-grid"></div></div>`);
+    for (const s of list) {
+      const have = Skins.owned(data, s.id);
+      const on = data.settings.skin === s.id;
+      const pr = have ? null : Skins.progress(s, f);
+      const b = h(`<button type="button" class="skin${on ? " on" : ""}${have ? "" : " locked"}" ${have ? "" : "aria-disabled=\"true\""}>
+        ${skinPreview(s)}
+        <span class="sk-name">${have ? "" : "🔒 "}${esc(s.name)}${s.rare ? '<span class="tag">レア</span>' : ""}</span>
+        ${on ? '<span class="sk-sub">使用中</span>' : have ? "" : `<span class="sk-sub">${esc(s.cond)}${pr ? `<br>いま ${pr.now}/${pr.need}${esc(pr.unit)}` : ""}</span>`}
+      </button>`);
+      b.addEventListener("click", () => {
+        if (!have) return toast(`条件：${s.cond}`);
+        if (on) return;
+        useSkin(s.id);
+        render();
+        toast(`スキンを「${s.name}」にしました`);
+      });
+      grid.querySelector(".skin-grid").appendChild(b);
+    }
+    sec.appendChild(grid);
+  }
+  const secret = Skins.LIST.filter((s) => s.rare && !Skins.owned(data, s.id)).length;
+  if (secret) sec.appendChild(h(`<p class="hint">ほかに、条件がひみつのスキンが あと ${secret} 個あります。</p>`));
+  view.appendChild(sec);
+}
+
 // ---------- 設定タブ ----------
 function renderSettings() {
+  renderSkins();
+
   // 分類
   const csec = h(`<section class="card"><h2>分類</h2>
     <div class="seg2 small"><button data-type="expense">支出</button><button data-type="income">収入</button></div>
@@ -862,10 +942,15 @@ async function importData(f) {
   toast(`${r.added} 件を足しました` + (r.skipped ? `（同じ記録 ${r.skipped} 件は飛ばしました）` : "") + (r.broken ? `　壊れた記録 ${r.broken} 件は読めませんでした` : "") + (nf ? `　友だち ${nf} 人` : ""));
 }
 
+if (!Skins.owned(data, data.settings.skin)) data.settings.skin = "basic";
+Skins.apply(data.settings.skin);
 render();
 runRecurring();
-// ホーム画面のアプリは閉じずに裏へ回るだけのことが多いので、戻ってきたときにも確かめる
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") runRecurring(); });
+checkSkins();
+// ホーム画面のアプリは閉じずに裏へ回るだけのことが多いので、戻ってきたときにも確かめる（季節のスキンもここで）
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { runRecurring(); checkSkins(); } });
+// ライト／ダークが切り替わったら、スキンの見本も描き直す（色そのものは skins.js が当て直す）
+if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
 
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   navigator.serviceWorker.register("sw.js");

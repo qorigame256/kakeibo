@@ -1,5 +1,5 @@
 // ランキング（知り合いどうしの見せ合い。仕様書 D30）。指標の計算と、友だちへ渡す「コード」の作り・読み取り。
-// サーバーは使わない。コードに入れるのは計算した数字と名前だけで、記録の中身（日付・メモ・分類）は入れない。
+// サーバーは使わない。コードに入れるのは計算した数字と名前と使っているスキン（D31）だけで、記録の中身（日付・メモ・分類）は入れない。
 const Ranking = (() => {
   const PREFIX = "KKB1.";
   const NAME_MAX = 12;
@@ -32,17 +32,22 @@ const Ranking = (() => {
     return { m, p: shift(m, -1) };
   }
 
-  // 自分の成績を計算する。amount は金額の見せ方（自分の画面では "exact"）
-  function computeCard(data, todayStr, amount) {
-    const { m, p } = context(todayStr);
-    const pp = shift(m, -2);
-    // 記録した日＝手で入れた記録の createdAt の日（端末の時刻）。固定費の自動入力と、createdAt の無い記録は数えない
+  // 記録した日＝手で入れた記録の createdAt の日（端末の時刻）。固定費の自動入力と、createdAt の無い記録は数えない
+  function recordDays(data) {
     const days = new Set();
     for (const e of data.entries) {
       if (e.rec || !e.createdAt) continue;
       const d = new Date(e.createdAt);
       if (!isNaN(d)) days.add(ymd(d));
     }
+    return days;
+  }
+
+  // 自分の成績を計算する。amount は金額の見せ方（自分の画面では "exact"）
+  function computeCard(data, todayStr, amount) {
+    const { m, p } = context(todayStr);
+    const pp = shift(m, -2);
+    const days = recordDays(data);
     let cur = days.has(todayStr) ? todayStr : prevDay(todayStr);
     let streak = 0;
     while (days.has(cur)) { streak++; cur = prevDay(cur); }
@@ -70,6 +75,7 @@ const Ranking = (() => {
       expense: t.expense > 0 ? t.expense : null,
       balance: t.income || t.expense ? t.income - t.expense : null,
       amount: AMOUNT_MODES.includes(amount) ? amount : "hidden",
+      skin: data.settings.skin || "basic",
     };
     if (card.amount === "hidden") { card.expense = null; card.balance = null; }
     if (card.amount === "rough") {
@@ -121,6 +127,8 @@ const Ranking = (() => {
       amount: AMOUNT_MODES.includes(c.amount) ? c.amount : "hidden",
     };
     if (Object.values(out).some((v) => v === undefined)) return null;
+    // スキンは古いコードには無い。知らない名前でもコードは捨てない（新しい版のアプリのスキンかもしれないため）
+    out.skin = typeof c.skin === "string" && /^[a-z0-9-]{1,24}$/.test(c.skin) ? c.skin : null;
     if (out.amount === "hidden") { out.expense = null; out.balance = null; }
     return out;
   }
@@ -159,5 +167,5 @@ const Ranking = (() => {
     return [...ranked, ...rows.filter((r) => r.value == null)];
   }
 
-  return { METRICS, NAME_MAX, context, computeCard, encode, decode, normalize, addFriend, mergeFriends, rank };
+  return { METRICS, NAME_MAX, context, recordDays, computeCard, encode, decode, normalize, addFriend, mergeFriends, rank };
 })();
