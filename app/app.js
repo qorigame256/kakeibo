@@ -59,12 +59,23 @@ function save() {
   return ok;
 }
 let toastTimer = null;
-function toast(msg) {
+// undo を渡すと「取り消す」を付け、押せるよう長めに出す
+function toast(msg, undo) {
   const t = document.getElementById("toast");
   t.textContent = msg;
+  t.classList.toggle("has-act", !!undo);
+  if (undo) {
+    const b = h(`<button type="button">取り消す</button>`);
+    b.addEventListener("click", () => { t.classList.remove("show", "has-act"); undo(); });
+    t.appendChild(b);
+  }
   t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+  toastTimer = setTimeout(() => t.classList.remove("show", "has-act"), undo ? 4500 : 2200);
+}
+function daysBetween(a, b) {
+  const [y1, m1, d1] = a.split("-").map(Number), [y2, m2, d2] = b.split("-").map(Number);
+  return Math.round((new Date(y2, m2 - 1, d2) - new Date(y1, m1 - 1, d1)) / 86400000);
 }
 function h(html) {
   const tpl = document.createElement("template");
@@ -104,7 +115,8 @@ function render() {
 // ---------- 入力の形（入力タブと修正の画面で共通） ----------
 // init = { type, date, cat, amount, memo }。onSave(値) が true を返したら形を空に戻す
 // recurring: true のときは固定費の登録用（日付の代わりに「毎月◯日」と「額が変わる」を出す。init に day・variable）
-function entryForm(init, { onSave, onDelete, saveLabel, recurring }) {
+// preset: true のときはよく使う記録の登録用（日付なし。金額は空でもよく、空なら amount は null）
+function entryForm(init, { onSave, onDelete, saveLabel, recurring, preset }) {
   const days = Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${i + 1}日</option>`).join("");
   const st = { ...init };
   const box = h(`<form class="entry" novalidate>
@@ -112,16 +124,18 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring }) {
       <button type="button" data-type="expense">支出</button>
       <button type="button" data-type="income">収入</button>
     </div>
-    <label class="amount"><input name="amount" inputmode="numeric" autocomplete="off" placeholder="0" aria-label="金額"><span>円</span></label>
+    <label class="amount"><input name="amount" inputmode="numeric" autocomplete="off" placeholder="${preset ? "毎回入れる" : "0"}" aria-label="金額"><span>円</span></label>
     <div class="chips" aria-label="分類"></div>
     <div class="row2">
       ${recurring
         ? `<label class="field"><span>毎月</span><select name="day">${days}</select></label>`
-        : '<label class="field"><span>日付</span><input name="date" type="date" required></label>'}
-      <label class="field grow"><span>メモ</span><input name="memo" maxlength="100" placeholder="任意"></label>
+        : preset ? "" : '<label class="field"><span>日付</span><input name="date" type="date" required></label>'}
+      <label class="field grow"><span>メモ</span><input name="memo" maxlength="100" autocomplete="off" placeholder="${preset ? "ボタンの名前にもなります" : "任意"}"></label>
     </div>
+    <div class="memo-sugg" aria-label="前に使ったメモ"></div>
     ${recurring ? `<label class="check"><input type="checkbox" name="variable"><span>毎月額が変わる（目安額で入れて「要確認」を付ける）</span></label>
       <p class="hint">29〜31日を選ぶと、その日が無い月は月末に入ります。</p>` : ""}
+    ${preset ? '<p class="hint">金額を空にすると、押したときは分類とメモだけが入り、金額はそのつど入れます。</p>' : ""}
     <div class="actions">
       ${onDelete ? '<button type="button" class="btn danger" data-act="delete">削除</button>' : ""}
       <button type="submit" class="btn primary">${saveLabel}</button>
@@ -134,10 +148,11 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring }) {
   if (recurring) {
     box.querySelector("[name=day]").value = String(st.day || 1);
     box.querySelector("[name=variable]").checked = !!st.variable;
-  } else {
+  } else if (date) {
     date.value = st.date;
   }
   memo.value = st.memo || "";
+  let memos = memoIndex();
 
   function paint() {
     box.querySelectorAll(".seg2 button").forEach((b) => {
@@ -156,7 +171,35 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring }) {
       b.addEventListener("click", () => { st.cat = c.id; paint(); });
       chips.appendChild(b);
     }
+    paintSugg();
   }
+  // メモの候補：打っている文字を含む前のメモ（頭が合うものを先に）。空のときは選んだ分類でよく使うメモ
+  function paintSugg() {
+    const sugg = box.querySelector(".memo-sugg");
+    sugg.innerHTML = "";
+    const q = memo.value.trim().toLowerCase();
+    const all = memos[st.type];
+    let list;
+    if (q) {
+      list = all.filter((m) => m.key.includes(q) && m.key !== q);
+      list = [...list.filter((m) => m.key.startsWith(q)), ...list.filter((m) => !m.key.startsWith(q))];
+    } else if (st.cat) {
+      list = all.filter((m) => m.byCat[st.cat]).sort((a, b) => b.byCat[st.cat] - a.byCat[st.cat]);
+    } else {
+      list = [];
+    }
+    for (const m of list.slice(0, 5)) {
+      const b = h(`<button type="button" class="sugg">${esc(m.memo)}</button>`);
+      b.addEventListener("click", () => {
+        memo.value = m.memo;
+        // 分類をまだ選んでいなければ、そのメモで最後に使った分類にする
+        if (!st.cat && findCat(st.type, m.cat) && !findCat(st.type, m.cat).deleted) st.cat = m.cat;
+        paint();
+      });
+      sugg.appendChild(b);
+    }
+  }
+  memo.addEventListener("input", paintSugg);
   box.querySelectorAll(".seg2 button").forEach((b) => {
     b.addEventListener("click", () => {
       if (st.type === b.dataset.type) return;
@@ -173,26 +216,57 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring }) {
   });
   box.addEventListener("submit", (ev) => {
     ev.preventDefault();
-    const n = parseAmount(amount.value);
-    if (n == null) { toast("金額を 1〜99,999,999 の数字で入れてください"); amount.focus(); return; }
+    const n = preset && !amount.value.trim() ? null : parseAmount(amount.value);
+    if (n == null && !(preset && !amount.value.trim())) { toast("金額を 1〜99,999,999 の数字で入れてください"); amount.focus(); return; }
     if (!st.cat) { toast("分類を選んでください"); return; }
     const v = { type: st.type, cat: st.cat, amount: n, memo: memo.value.trim() };
     if (recurring) {
       v.day = Number(box.querySelector("[name=day]").value);
       v.variable = box.querySelector("[name=variable]").checked;
-    } else {
+    } else if (!preset) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date.value)) { toast("日付を入れてください"); return; }
       v.date = date.value;
     }
     const ok = onSave(v);
     if (ok) {
       amount.value = ""; memo.value = ""; st.cat = null;
+      memos = memoIndex(); // いま入れたメモも次から候補に出す
       paint();
     }
   });
   if (onDelete) box.querySelector("[data-act=delete]").addEventListener("click", onDelete);
+  // 外から中身を入れる・読む（よく使う記録のボタンと、その登録の画面で使う）
+  box.fill = (v) => {
+    if (v.type !== st.type && init.onTypeChange) init.onTypeChange(v.type);
+    st.type = v.type; st.cat = v.cat;
+    if (v.amount) amount.value = v.amount.toLocaleString("ja-JP");
+    memo.value = v.memo || "";
+    paint();
+  };
+  box.peek = () => ({ type: st.type, cat: st.cat, amount: parseAmount(amount.value), memo: memo.value.trim() });
+  box.refreshMemos = () => { memos = memoIndex(); paintSugg(); };
   paint();
   return box;
+}
+
+// メモの一覧（支出・収入ごと）。よく使う順、同じなら最近使った順。byCat は分類ごとに使った回数、cat は最後に使った分類
+function memoIndex() {
+  const out = { expense: new Map(), income: new Map() };
+  for (const e of data.entries) {
+    const memo = (e.memo || "").trim();
+    if (!memo) continue;
+    const map = out[e.type];
+    if (!map) continue;
+    const key = memo.toLowerCase();
+    let m = map.get(key);
+    if (!m) map.set(key, (m = { key, memo, n: 0, last: "", cat: e.cat, byCat: {} }));
+    m.n++;
+    m.byCat[e.cat] = (m.byCat[e.cat] || 0) + 1;
+    const when = e.date + (e.createdAt || "");
+    if (when > m.last) { m.last = when; m.cat = e.cat; m.memo = memo; }
+  }
+  const sorted = (map) => [...map.values()].sort((a, b) => b.n - a.n || (a.last < b.last ? 1 : -1));
+  return { expense: sorted(out.expense), income: sorted(out.income) };
 }
 
 // ---------- 入力タブ ----------
@@ -214,6 +288,46 @@ function renderInput() {
   );
   form.querySelector("[name=date]").addEventListener("change", (e) => { draft.date = e.target.value; });
   view.appendChild(form);
+
+  // よく使う記録（仕様書 D32）：金額があれば押すだけで記録、無ければ形に分類とメモを入れる
+  const psec = h(`<section class="card"><h2>よく使う記録</h2><div class="presets"></div></section>`);
+  const pbox = psec.querySelector(".presets");
+  for (const p of data.presets) {
+    const c = findCat(p.type, p.cat);
+    if (!c || c.deleted) continue; // 分類を消したものは、設定で直すまで出さない
+    const b = h(`<button type="button" class="preset ${p.type}"><span class="pr-name">${esc(presetName(p))}</span><span class="pr-amt">${p.amount ? (p.type === "income" ? "+" : "") + yen(p.amount) : "金額を入れる"}</span></button>`);
+    b.addEventListener("click", () => {
+      if (!p.amount) {
+        form.fill(p);
+        form.querySelector("[name=amount]").focus();
+        return;
+      }
+      const d = form.querySelector("[name=date]").value;
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : today();
+      const e = { id: Store.newId(), type: p.type, date, amount: p.amount, cat: p.cat, memo: p.memo, createdAt: new Date().toISOString() };
+      data.entries.push(e);
+      if (!save()) { data.entries.pop(); return; }
+      renderRecent();
+      form.refreshMemos();
+      toast(`${date === today() ? "" : dayLabel(date) + "に"}${presetName(p)} ${yen(p.amount)}を記録しました`, () => {
+        const i = data.entries.indexOf(e);
+        if (i < 0) return;
+        data.entries.splice(i, 1);
+        save();
+        // ほかのタブへ移ったあとに押されたら、その画面を描き直す
+        if (psec.isConnected) { renderRecent(); form.refreshMemos(); } else render();
+        toast("取り消しました");
+      });
+    });
+    pbox.appendChild(b);
+  }
+  const add = h(`<button type="button" class="preset add">＋ 登録</button>`);
+  // いま形に入れている中身で登録の画面を開く（金額・分類・メモを打ってから押すと楽）
+  add.addEventListener("click", () => openPreset(null, form.peek()));
+  pbox.appendChild(add);
+  if (!data.presets.length) psec.appendChild(h(`<p class="hint">「コンビニ・食費・500円」のような、よく入れる記録をボタンにしておけます。上に入れてから「＋ 登録」を押すと、その中身で登録できます。</p>`));
+  view.appendChild(psec);
+
   const recent = h(`<section class="card"><h2>最近の記録</h2><div class="recent"></div></section>`);
   view.appendChild(recent);
   function renderRecent() {
@@ -421,15 +535,25 @@ function renderBudgets(byCat) {
   if (!budgeted.length) {
     bsec.appendChild(h(`<p class="muted">予算はまだ決めていません。「設定」の「予算」で分類ごとに決められます。</p>`));
   } else {
-    let sumB = 0, sumU = 0;
+    // 今月だけ「1日あたり使える額」を出す（仕様書 D34）。まだ入っていない今月の固定費は先に引いておく
+    const t = today();
+    const now = month === t.slice(0, 7);
+    const daysLeft = now ? new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 0).getDate() - Number(t.slice(8)) + 1 : 0;
+    const planned = new Map();
+    if (now) {
+      for (const r of data.recurring) {
+        if (r.type === "expense" && r.next === month && Store.recDate(r.next, r.day) > t) planned.set(r.cat, (planned.get(r.cat) || 0) + r.amount);
+      }
+    }
+    let sumB = 0, sumU = 0, sumP = 0;
     const rows = budgeted.map((c) => {
-      const b = data.budgets[c.id], u = byCat.get(c.id) || 0;
-      sumB += b; sumU += u;
-      return budgetRow(c.name, u, b);
+      const b = data.budgets[c.id], u = byCat.get(c.id) || 0, pl = planned.get(c.id) || 0;
+      sumB += b; sumU += u; sumP += pl;
+      return budgetRow(c.name, u, b, now && { daysLeft, planned: pl });
     });
     rows.forEach((r) => bsec.appendChild(r));
     if (budgeted.length > 1) {
-      const total = budgetRow("予算を決めた分類の合計", sumU, sumB);
+      const total = budgetRow("予算を決めた分類の合計", sumU, sumB, now && { daysLeft, planned: sumP });
       total.classList.add("total");
       bsec.appendChild(total);
     }
@@ -477,13 +601,23 @@ function renderBreakdown(list, t, byCat, periodName) {
   }
 }
 
-function budgetRow(name, used, budget) {
+// pace = { daysLeft, planned }（今月のときだけ）。planned はまだ入っていない今月の固定費
+function budgetRow(name, used, budget, pace) {
   const over = used > budget;
   const pct = Math.min(100, (used / budget) * 100);
+  let perDay = "";
+  if (pace && !over) {
+    const rest = budget - used - pace.planned;
+    const pl = yen(pace.planned);
+    if (rest > 0) perDay = `<div class="b-pace">1日あたり <b>${yen(Math.floor(rest / pace.daysLeft))}</b>（今日を入れてあと${pace.daysLeft}日）${pace.planned ? `<br>これから入る固定費 ${pl}を先に引いています` : ""}</div>`;
+    else if (rest === 0 && pace.planned) perDay = `<div class="b-pace">残りは、これから入る固定費 ${pl}の分です</div>`;
+    else if (pace.planned) perDay = `<div class="b-pace warn">これから入る固定費 ${pl}が入ると、予算を ${yen(-rest)} 超えます</div>`;
+  }
   return h(`<div class="budget${over ? " over" : ""}">
     <div class="b-top"><span>${esc(name)}</span><span class="b-num">${yen(used)} / ${yen(budget)}</span></div>
     <div class="b-bar"><i style="width:${pct}%"></i></div>
     <div class="b-rest">${over ? `${yen(used - budget)} 超えています` : `残り ${yen(budget - used)}（${Math.round((used / budget) * 100)}% 使用）`}</div>
+    ${perDay}
   </div>`);
 }
 
@@ -759,6 +893,28 @@ function renderSettings() {
   });
   view.appendChild(csec);
 
+  // よく使う記録（仕様書 D32）
+  const psec = h(`<section class="card"><h2>よく使う記録</h2>
+    <p class="hint">入力タブの「よく使う記録」に並ぶボタンです。押して変えたり外したりできます。</p>
+    <ul class="preset-list"></ul>
+    <div class="actions"><button class="btn" data-act="add-preset">＋ 足す</button></div>
+  </section>`);
+  const pl = psec.querySelector(".preset-list");
+  if (!data.presets.length) pl.appendChild(h(`<li class="muted">まだありません。</li>`));
+  data.presets.forEach((p, i) => {
+    const li = h(`<li><button class="rec-row ${p.type}">
+      <span class="er-main"><span class="er-cat">${esc(presetName(p))}</span>${p.memo ? `<span class="er-memo">${esc(catName(p.type, p.cat))}</span>` : ""}</span>
+      <span class="er-amt">${p.amount ? (p.type === "income" ? "+" : "") + yen(p.amount) : '<span class="muted">金額はそのつど</span>'}</span>
+    </button>
+    <button class="icon-btn" data-m="-1" aria-label="上へ" ${i === 0 ? "disabled" : ""}>↑</button>
+    <button class="icon-btn" data-m="1" aria-label="下へ" ${i === data.presets.length - 1 ? "disabled" : ""}>↓</button></li>`);
+    li.querySelector(".rec-row").addEventListener("click", () => openPreset(p.id));
+    li.querySelectorAll("[data-m]").forEach((b) => b.addEventListener("click", () => movePreset(p, Number(b.dataset.m))));
+    pl.appendChild(li);
+  });
+  psec.querySelector("[data-act=add-preset]").addEventListener("click", () => openPreset(null));
+  view.appendChild(psec);
+
   // 固定費
   const rsec = h(`<section class="card"><h2>固定費（毎月）</h2>
     <p class="hint">登録した日が来ると、アプリを開いたときに記録が自動で入ります。登録を変えたり消したりしても、もう入った記録はそのままです。</p>
@@ -828,9 +984,11 @@ function renderSettings() {
 
   // バックアップ
   const last = data.settings.lastExport;
+  const overdue = backupOverdue();
   const ksec = h(`<section class="card"><h2>バックアップ</h2>
     <p class="hint">記録はこの端末の中だけにあります。機種変更や万一に備えて、ときどき書き出してください。</p>
     <p>記録 ${data.entries.length} 件　／　最後に書き出した日：${last ? esc(last) : "まだありません"}</p>
+    ${overdue != null ? `<p class="notice">${last ? `最後に書き出してから ${overdue} 日たっています。` : "まだ一度も書き出していません。"}</p>` : ""}
     <div class="actions"><button class="btn primary" data-act="export">書き出す</button><button class="btn" data-act="import">読み込む</button></div>
     <input type="file" accept="application/json,.json" hidden>
   </section>`);
@@ -886,6 +1044,73 @@ function openRecurring(id) {
   daySel.addEventListener("change", paintNext);
   paintNext();
   wrap.appendChild(form);
+  openSheet(wrap);
+}
+
+// よく使う記録のボタンの名前：メモがあればメモ、無ければ分類名
+function presetName(p) {
+  return p.memo || catName(p.type, p.cat);
+}
+
+// よく使う記録の登録・変更（id が null なら新しく足す。init は入力タブの形の中身）
+function openPreset(id, init) {
+  const p = id ? data.presets.find((x) => x.id === id) : null;
+  const wrap = h(`<div><div class="sheet-head"><h2>${p ? "よく使う記録の変更" : "よく使う記録を登録"}</h2><button class="icon-btn" aria-label="閉じる">✕</button></div></div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  const start = p ? { ...p } : { type: "expense", cat: null, amount: null, memo: "", ...(init || {}) };
+  wrap.appendChild(entryForm(start, {
+    preset: true,
+    saveLabel: p ? "保存" : "登録する",
+    onSave: (v) => {
+      if (p) Object.assign(p, v);
+      else data.presets.push({ id: "p" + Store.newId(), ...v });
+      save(); closeSheet(); render();
+      toast(p ? "変えました" : `「${presetName(v)}」を登録しました`);
+      return false;
+    },
+    onDelete: p ? () => {
+      if (!confirm(`「${presetName(p)}」をよく使う記録から外しますか？\nもう入れた記録は残ります。`)) return;
+      data.presets.splice(data.presets.indexOf(p), 1);
+      save(); closeSheet(); render();
+      toast("外しました");
+    } : null,
+  }));
+  openSheet(wrap);
+}
+
+function movePreset(p, d) {
+  const i = data.presets.indexOf(p), j = i + d;
+  if (j < 0 || j >= data.presets.length) return;
+  [data.presets[i], data.presets[j]] = [data.presets[j], data.presets[i]];
+  save(); render();
+}
+
+// ---------- 書き出しの催促（仕様書 D35） ----------
+const BACKUP_DAYS = 30; // 最後に書き出してから（まだなら使い始めてから）この日数で知らせる
+const BACKUP_ASK_AGAIN = 7; // 「あとで」を選んだら、次に知らせるまでの日数
+// 書き出していない日数。知らせる時期でなければ null
+function backupOverdue() {
+  if (!data.entries.length) return null;
+  const base = data.settings.lastExport || data.settings.startedAt;
+  if (!base) return null;
+  const n = daysBetween(base, today());
+  return n >= BACKUP_DAYS ? n : null;
+}
+function maybeAskBackup() {
+  const n = backupOverdue();
+  if (n == null || !sheet.hidden) return; // ほかの画面が開いていたら、次に開いたときに回す
+  const asked = data.settings.backupAskedAt;
+  if (asked && daysBetween(asked, today()) < BACKUP_ASK_AGAIN) return;
+  data.settings.backupAskedAt = today();
+  save();
+  const wrap = h(`<div><div class="sheet-head"><h2>バックアップしませんか</h2><button class="icon-btn" aria-label="閉じる">✕</button></div>
+    <p>${data.settings.lastExport ? `最後に書き出してから ${n} 日たちました。` : `使い始めてから ${n} 日、まだ一度も書き出していません。`}</p>
+    <p class="hint">記録はこの端末の中にしかありません。機種変更や故障のときに消えないよう、ファイルに書き出しておくと安心です（iPhone では「"ファイル"に保存」を選びます）。</p>
+    <div class="actions"><button class="btn" data-act="later">あとで</button><button class="btn primary" data-act="export">書き出す</button></div></div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  wrap.querySelector("[data-act=later]").addEventListener("click", closeSheet);
+  // 共有シートは押した直後でないと開かないので、先に書き出しを始めてから閉じる
+  wrap.querySelector("[data-act=export]").addEventListener("click", () => { exportData(); closeSheet(); });
   openSheet(wrap);
 }
 
@@ -947,8 +1172,14 @@ Skins.apply(data.settings.skin);
 render();
 runRecurring();
 checkSkins();
+// スキンの知らせ（setTimeout 0 で出る）が先。出ていれば催促は次に開いたときに回る
+setTimeout(maybeAskBackup, 600);
 // ホーム画面のアプリは閉じずに裏へ回るだけのことが多いので、戻ってきたときにも確かめる（季節のスキンもここで）
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { runRecurring(); checkSkins(); } });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  runRecurring(); checkSkins();
+  setTimeout(maybeAskBackup, 600);
+});
 // ライト／ダークが切り替わったら、スキンの見本も描き直す（色そのものは skins.js が当て直す）
 if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
 

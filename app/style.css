@@ -307,3 +307,24 @@ main {
 .skin-news .sk-prev { width: 72px; flex: none; }
 .sn-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .sn-main .muted { font-size: 12px; }
+
+/* よく使う記録・メモの候補・1日あたり（仕様書 D32〜D34） */
+.presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.preset { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: 100%; border: 1px solid var(--line); background: var(--bg); border-radius: 12px; padding: 6px 12px; text-align: left; }
+.pr-name { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.pr-amt { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.preset.income .pr-amt { color: var(--income); }
+.preset.add { justify-content: center; color: var(--accent); border-style: dashed; min-height: 48px; }
+.preset-list { list-style: none; margin: 0; padding: 0; }
+.preset-list li { display: flex; align-items: center; gap: 2px; border-top: 1px solid var(--line); }
+.preset-list li:first-child { border-top: 0; }
+.preset-list li.muted { padding: 6px 0; }
+.preset-list .rec-row { flex: 1; min-width: 0; }
+.memo-sugg { display: flex; flex-wrap: wrap; gap: 6px; }
+.memo-sugg:not(:empty) { margin-top: 8px; }
+.sugg { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 4px 11px; font-size: 14px; color: var(--text2); min-height: 32px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.b-pace { font-size: 13px; color: var(--text2); margin-top: 1px; }
+.b-pace b { color: var(--text); font-variant-numeric: tabular-nums; }
+.b-pace.warn { color: var(--over); }
+#toast.has-act { pointer-events: auto; display: flex; align-items: center; gap: 14px; width: max-content; }
+#toast button { border: 0; background: none; color: #fff; font-weight: 700; text-decoration: underline; padding: 4px 0; flex: none; }

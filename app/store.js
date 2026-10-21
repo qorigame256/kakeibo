@@ -23,7 +23,8 @@ const Store = (() => {
       recurring: [],
       friends: [], // ランキングの友だちの成績（仕様書 D30）
       skins: {}, // 手に入れたスキンと手に入れた日（仕様書 D31）
-      settings: { lastExport: null, nickname: "", myId: null, shareAmount: "hidden", skin: "basic", startedAt: null },
+      presets: [], // よく使う記録（仕様書 D32）
+      settings: { lastExport: null, nickname: "", myId: null, shareAmount: "hidden", skin: "basic", startedAt: null, backupAskedAt: null },
     };
   }
 
@@ -45,6 +46,7 @@ const Store = (() => {
         recurring: Array.isArray(d.recurring) ? d.recurring : [],
         friends: Array.isArray(d.friends) ? d.friends : [],
         skins: d.skins && typeof d.skins === "object" && !Array.isArray(d.skins) ? d.skins : {},
+        presets: Array.isArray(d.presets) ? d.presets.filter(isPreset) : [],
         settings: { ...base.settings, ...(d.settings || {}) },
       };
     } catch (e) {
@@ -153,7 +155,20 @@ const Store = (() => {
       data.recurring.push(add);
       recIds.add(r.id);
     }
+    // よく使う記録も今に無い id だけ足す
+    const preIds = new Set(data.presets.map((p) => p.id));
+    for (const p of arr(incoming.presets)) {
+      if (!isPreset(p) || preIds.has(p.id)) continue;
+      data.presets.push({ id: p.id, type: p.type, cat: p.cat, amount: p.amount, memo: str(p.memo) });
+      preIds.add(p.id);
+    }
     return result;
+  }
+
+  // 金額は空（null）でもよい。そのときは押すと入力の形に分類とメモだけ入る
+  function isPreset(p) {
+    return p && typeof p.id === "string" && (p.type === "expense" || p.type === "income") &&
+      typeof p.cat === "string" && (p.amount === null || isAmount(p.amount));
   }
 
   function isRecurring(r) {
