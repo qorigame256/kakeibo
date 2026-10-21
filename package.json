@@ -1,0 +1,17 @@
+{
+  "name": "kakeibo",
+  "private": true,
+  "description": "App Store 用に包むための道具（Capacitor）。app/ 自体はビルドなしで動く",
+  "scripts": {
+    "sync": "cap sync ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.5.3",
+    "@capacitor/filesystem": "8.1.4",
+    "@capacitor/ios": "8.5.3",
+    "@capacitor/share": "8.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3"
+  }
+}

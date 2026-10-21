@@ -28,9 +28,34 @@ const Store = (() => {
     };
   }
 
+  // 保存先。ストア版（Capacitor の入れ物の中）は iPhone アプリ用のファイル、それ以外（PWA）は localStorage（仕様書 D24）。
+  // iOS は容量が足りないとき、アプリの中のブラウザの保存（localStorage）を消すことがあるため
+  const FS = window.Capacitor?.isNativePlatform?.() ? window.Capacitor.Plugins?.Filesystem : null;
+  const FILE = { path: KEY + ".json", directory: "LIBRARY", encoding: "utf8" };
+  let raw = null; // init() で読んだ中身
+  let readFailed = false; // ファイルはあるのに読めなかった。上書きで消さないよう保存を止める
+  let writing = Promise.resolve(); // ファイルへの書き込みを順番に並べる
+  let onSaveError = null;
+
+  // 起動のときに1回だけ呼ぶ。ファイルの読み込みは待ちが要るので、load() より先にここで読んでおく。
+  // ファイルはあるのに読めなかったときだけ false を返す
+  async function init() {
+    if (!FS) {
+      try { raw = localStorage.getItem(KEY); } catch (e) { /* 読めないときは空で始める */ }
+      return true;
+    }
+    try { await FS.stat(FILE); } catch (e) { return true; } // まだ無い（初めて開いた）
+    try { raw = (await FS.readFile(FILE)).data; } catch (e) { readFailed = true; }
+    return !readFailed;
+  }
+
+  function keepBroken(text) {
+    const name = KEY + ".broken." + Date.now();
+    if (FS) FS.writeFile({ ...FILE, path: name + ".json", data: text }).catch(() => {});
+    else try { localStorage.setItem(name, text); } catch (_) {}
+  }
+
   function load() {
-    let raw = null;
-    try { raw = localStorage.getItem(KEY); } catch (e) { /* 読めないときは空で始める */ }
     if (!raw) return fresh();
     try {
       const d = JSON.parse(raw);
@@ -51,14 +76,21 @@ const Store = (() => {
       };
     } catch (e) {
       // 壊れていても上書きで消さないよう、退避してから空で始める
-      try { localStorage.setItem(KEY + ".broken." + Date.now(), raw); } catch (_) {}
+      keepBroken(raw);
       return fresh();
     }
   }
 
+  // ファイルへの書き込みは待たずに true を返す。失敗したら onSaveError で渡した関数で知らせる
   function save(data) {
+    if (readFailed) return false;
+    const text = JSON.stringify(data);
+    if (FS) {
+      writing = writing.then(() => FS.writeFile({ ...FILE, data: text })).catch(() => { if (onSaveError) onSaveError(); });
+      return true;
+    }
     try {
-      localStorage.setItem(KEY, JSON.stringify(data));
+      localStorage.setItem(KEY, text);
       return true;
     } catch (e) {
       return false;
@@ -209,5 +241,5 @@ const Store = (() => {
     return n;
   }
 
-  return { load, save, newId, merge, fresh, recDate, firstRecMonth, applyRecurring };
+  return { init, load, save, onSaveError: (fn) => { onSaveError = fn; }, newId, merge, fresh, recDate, firstRecMonth, applyRecurring };
 })();

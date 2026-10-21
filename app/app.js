@@ -1,5 +1,9 @@
 // 画面の切り替えと5つのタブ（入力・一覧・集計・ランキング・設定）。
-const data = Store.load();
+let data; // いちばん下で Store.init() を待ってから入れる
+// ストア版（Capacitor の入れ物の中）だけにある iPhone の部品。PWA では null（仕様書 D25）
+const Native = window.Capacitor?.isNativePlatform?.() ? window.Capacitor.Plugins : null;
+// 共有シートを閉じただけのとき。PWA は AbortError、ストア版の Share は「Share canceled」で失敗する
+const isCancel = (e) => e?.name === "AbortError" || /cancel/i.test(e?.message || "");
 const view = document.getElementById("view");
 const titleEl = document.getElementById("title");
 const TITLES = { input: "入力", list: "一覧", summary: "集計", ranking: "ランキング", settings: "設定" };
@@ -52,9 +56,10 @@ function parseAmount(s) {
   return n >= 1 && n <= 99999999 ? n : null;
 }
 // 失敗はすぐ後の「◯◯しました」の案内に上書きされないよう、閉じるまで残る alert で知らせる
+const saveFailed = () => alert("保存できませんでした。端末の空きを確認してください。\n（いまの変更は、アプリを閉じると消えます）");
 function save() {
   const ok = Store.save(data);
-  if (!ok) alert("保存できませんでした。端末の空きを確認してください。\n（いまの変更は、アプリを閉じると消えます）");
+  if (!ok) saveFailed();
   else checkSkins();
   return ok;
 }
@@ -99,6 +104,7 @@ function expenseColor(id) {
 // ---------- タブの切り替え ----------
 document.querySelectorAll(".tabs button").forEach((b) => {
   b.addEventListener("click", () => {
+    if (!data) return; // 読み込みが済む前
     tab = b.dataset.tab;
     render();
     window.scrollTo(0, 0);
@@ -721,13 +727,18 @@ function openSendCard() {
   openSheet(wrap);
 }
 
+// ストア版の住所は capacitor://localhost なので、公開している PWA の住所を渡す（ストアの住所が決まったら差し替える）
+const APP_URL = Native ? "https://qorigame256.github.io/kakeibo/" : new URL("./", location.href).href;
 async function shareCard(card, wrap) {
   const text = `家計簿アプリのランキング用の成績です（${card.name}・${shortDate(card.at)}）\n` +
     `アプリの「ランキング」→「コードを貼る」に、このメッセージをまるごと貼ってください。\n` +
-    `${Ranking.encode(card)}\nアプリ：${new URL("./", location.href).href}`;
+    `${Ranking.encode(card)}\nアプリ：${APP_URL}`;
   // iPhone では共有シートが開き、LINE などを選べる
-  if (navigator.share) {
-    try { await navigator.share({ text }); closeSheet(); return; } catch (e) { if (e.name === "AbortError") return; }
+  if (Native || navigator.share) {
+    try {
+      await (Native ? Native.Share.share({ text }) : navigator.share({ text }));
+      closeSheet(); return;
+    } catch (e) { if (isCancel(e)) return; }
   }
   try {
     await navigator.clipboard.writeText(text);
@@ -1135,8 +1146,12 @@ async function exportData() {
   const name = `家計簿_${today()}.json`;
   const file = new File([payload], name, { type: "application/json" });
   try {
-    // iPhone では共有シートが開き、「"ファイル"に保存」や AirDrop で逃がせる
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    // iPhone では共有シートが開き、「"ファイル"に保存」や AirDrop で逃がせる。
+    // ストア版は一時ファイルに書いてから Share の部品に渡す（アプリの中のブラウザでは下の2つが効かない見込み）
+    if (Native) {
+      const { uri } = await Native.Filesystem.writeFile({ path: name, data: payload, directory: "CACHE", encoding: "utf8" });
+      await Native.Share.share({ files: [uri], title: name });
+    } else if (navigator.canShare && navigator.canShare({ files: [file] })) {
       await navigator.share({ files: [file], title: name });
     } else {
       const a = document.createElement("a");
@@ -1149,7 +1164,7 @@ async function exportData() {
     data.settings.lastExport = today();
     save(); render();
   } catch (e) {
-    if (e.name !== "AbortError") toast("書き出しに失敗しました");
+    if (!isCancel(e)) toast("書き出しに失敗しました");
   }
 }
 
@@ -1167,21 +1182,26 @@ async function importData(f) {
   toast(`${r.added} 件を足しました` + (r.skipped ? `（同じ記録 ${r.skipped} 件は飛ばしました）` : "") + (r.broken ? `　壊れた記録 ${r.broken} 件は読めませんでした` : "") + (nf ? `　友だち ${nf} 人` : ""));
 }
 
-if (!Skins.owned(data, data.settings.skin)) data.settings.skin = "basic";
-Skins.apply(data.settings.skin);
-render();
-runRecurring();
-checkSkins();
-// スキンの知らせ（setTimeout 0 で出る）が先。出ていれば催促は次に開いたときに回る
-setTimeout(maybeAskBackup, 600);
-// ホーム画面のアプリは閉じずに裏へ回るだけのことが多いので、戻ってきたときにも確かめる（季節のスキンもここで）
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState !== "visible") return;
-  runRecurring(); checkSkins();
+Store.onSaveError(saveFailed);
+Store.init().then((ok) => {
+  if (!ok) alert("記録のファイルを読み込めませんでした。消してしまわないよう、この間は保存しません。\nアプリを閉じて開き直してください。");
+  data = Store.load();
+  if (!Skins.owned(data, data.settings.skin)) data.settings.skin = "basic";
+  Skins.apply(data.settings.skin);
+  render();
+  runRecurring();
+  checkSkins();
+  // スキンの知らせ（setTimeout 0 で出る）が先。出ていれば催促は次に開いたときに回る
   setTimeout(maybeAskBackup, 600);
+  // ホーム画面のアプリは閉じずに裏へ回るだけのことが多いので、戻ってきたときにも確かめる（季節のスキンもここで）
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    runRecurring(); checkSkins();
+    setTimeout(maybeAskBackup, 600);
+  });
+  // ライト／ダークが切り替わったら、スキンの見本も描き直す（色そのものは skins.js が当て直す）
+  if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
 });
-// ライト／ダークが切り替わったら、スキンの見本も描き直す（色そのものは skins.js が当て直す）
-if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
 
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   navigator.serviceWorker.register("sw.js");

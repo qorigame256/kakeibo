@@ -1,4 +1,5 @@
 // ホーム画面用アイコン（緑の地に白い「¥」）を app/icons/ に PNG で書き出す。
+// ストア版の入れ物（ios/）があれば、そちらのアイコン（1024px）と起動画面も書き出す。
 // 使い方: node tools/make-icons.js
 const fs = require("fs");
 const path = require("path");
@@ -26,18 +27,19 @@ function white(x, y) {
   return false;
 }
 
-function png(size) {
+// bg を渡すと、¥ の無いその色だけの画像にする（起動画面用）
+function png(size, bg) {
   const SS = 4; // 縁をなめらかにするため 4x4 で数える
   const raw = Buffer.alloc(size * (size * 3 + 1));
   for (let j = 0; j < size; j++) {
     raw[j * (size * 3 + 1)] = 0;
     for (let i = 0; i < size; i++) {
       let w = 0;
-      for (let a = 0; a < SS; a++)
+      if (!bg) for (let a = 0; a < SS; a++)
         for (let b = 0; b < SS; b++) if (white((i + (a + 0.5) / SS) / size, (j + (b + 0.5) / SS) / size)) w++;
       const t = w / (SS * SS);
       const o = j * (size * 3 + 1) + 1 + i * 3;
-      for (let k = 0; k < 3; k++) raw[o + k] = Math.round(BG[k] + (255 - BG[k]) * t);
+      for (let k = 0; k < 3; k++) raw[o + k] = bg ? bg[k] : Math.round(BG[k] + (255 - BG[k]) * t);
     }
   }
   const crcTable = Array.from({ length: 256 }, (_, n) => {
@@ -70,4 +72,16 @@ function png(size) {
 for (const s of [180, 192, 512]) {
   fs.writeFileSync(path.join(OUT, `icon-${s}.png`), png(s));
   console.log(`icon-${s}.png`);
+}
+
+// ストア版。起動画面はアプリの地の色（ライトの --bg）だけにする（Capacitor の既定の絵が出ないように）
+const IOS = path.join(__dirname, "..", "ios", "App", "App", "Assets.xcassets");
+if (fs.existsSync(IOS)) {
+  fs.writeFileSync(path.join(IOS, "AppIcon.appiconset", "AppIcon-512@2x.png"), png(1024));
+  console.log("ios AppIcon-512@2x.png");
+  const splash = png(2732, [0xf6, 0xf5, 0xf2]);
+  for (const n of ["splash-2732x2732.png", "splash-2732x2732-1.png", "splash-2732x2732-2.png"]) {
+    fs.writeFileSync(path.join(IOS, "Splash.imageset", n), splash);
+    console.log("ios " + n);
+  }
 }
