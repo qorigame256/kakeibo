@@ -255,7 +255,8 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring, preset }) {
   return box;
 }
 
-// メモの一覧（支出・収入ごと）。よく使う順、同じなら最近使った順。byCat は分類ごとに使った回数、cat は最後に使った分類
+// メモの一覧（支出・収入ごと）。よく使う順、同じなら最近使った順。byCat は分類ごとに使った回数、cat は最後に使った分類。
+// 「最近」「最後」は入力した時刻（createdAt）で見る。前の日の分をあとから入れたときも、その入力を最後として扱うため
 function memoIndex() {
   const out = { expense: new Map(), income: new Map() };
   for (const e of data.entries) {
@@ -268,7 +269,8 @@ function memoIndex() {
     if (!m) map.set(key, (m = { key, memo, n: 0, last: "", cat: e.cat, byCat: {} }));
     m.n++;
     m.byCat[e.cat] = (m.byCat[e.cat] || 0) + 1;
-    const when = e.date + (e.createdAt || "");
+    // createdAt の無い古い記録は、入力した時刻のある記録より前とみなす（頭の 0／1 で分ける）
+    const when = (e.createdAt ? "1" + e.createdAt : "0") + e.date;
     if (when > m.last) { m.last = when; m.cat = e.cat; m.memo = memo; }
   }
   const sorted = (map) => [...map.values()].sort((a, b) => b.n - a.n || (a.last < b.last ? 1 : -1));
@@ -283,7 +285,8 @@ function renderInput() {
       saveLabel: "記録する",
       onSave: (v) => {
         data.entries.push({ id: Store.newId(), ...v, createdAt: new Date().toISOString() });
-        // 保存できなければ記録を取り消し、入力も残す（そのまま押し直せるように）
+        // 保存できなければ記録を取り消し、入力も残す（そのまま押し直せるように）。
+        // ストア版は書き込みを待たず true が返るので、ここには来ない（失敗した記録は次の保存でまとめて書かれる）
         if (!save()) { data.entries.pop(); return false; }
         draft = { type: v.type, date: v.date, cat: null };
         toast(`${catName(v.type, v.cat)} ${yen(v.amount)}を記録しました`);
@@ -1178,8 +1181,15 @@ async function importData(f) {
   if (!incoming || incoming.app !== "kakeibo" || !Array.isArray(incoming.entries)) return toast("家計簿の書き出しファイルではありません");
   const r = Store.merge(data, incoming);
   const nf = Ranking.mergeFriends(data.friends, incoming.friends);
+  // 記録0件の端末では選んでいるスキンも引き継ぐので、色を当て直す（持っていないスキンなら起動時と同じく「いつもの」に戻す）
+  if (!Skins.owned(data, data.settings.skin)) data.settings.skin = "basic";
+  Skins.apply(data.settings.skin);
   save(); render();
   toast(`${r.added} 件を足しました` + (r.skipped ? `（同じ記録 ${r.skipped} 件は飛ばしました）` : "") + (r.broken ? `　壊れた記録 ${r.broken} 件は読めませんでした` : "") + (nf ? `　友だち ${nf} 人` : ""));
+}
+
+function onSchemeChange() {
+  if (tab === "settings") render();
 }
 
 Store.onSaveError(saveFailed);
@@ -1199,8 +1209,9 @@ Store.init().then((ok) => {
     runRecurring(); checkSkins();
     setTimeout(maybeAskBackup, 600);
   });
-  // ライト／ダークが切り替わったら、スキンの見本も描き直す（色そのものは skins.js が当て直す）
-  if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+  // ライト／ダークが切り替わったら、スキンの見本も描き直す（色そのものは skins.js が当て直す）。
+  // 見本は設定タブにしか無いので、ほかのタブは描き直さない（入力タブで描き直すと、打ちかけの中身が消える）
+  if (window.matchMedia) window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", onSchemeChange);
 });
 
 if ("serviceWorker" in navigator && location.protocol === "https:") {

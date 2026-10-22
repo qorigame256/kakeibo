@@ -49,10 +49,12 @@ const Store = (() => {
     return !readFailed;
   }
 
+  // 残せなかったら、空のデータで上書きして消さないよう、その回は保存を止めて知らせる
   function keepBroken(text) {
     const name = KEY + ".broken." + Date.now();
-    if (FS) FS.writeFile({ ...FILE, path: name + ".json", data: text }).catch(() => {});
-    else try { localStorage.setItem(name, text); } catch (_) {}
+    const failed = () => { readFailed = true; if (onSaveError) onSaveError(); };
+    if (FS) writing = writing.then(() => FS.writeFile({ ...FILE, path: name + ".json", data: text })).catch(failed);
+    else try { localStorage.setItem(name, text); } catch (_) { failed(); }
   }
 
   function load() {
@@ -86,7 +88,8 @@ const Store = (() => {
     if (readFailed) return false;
     const text = JSON.stringify(data);
     if (FS) {
-      writing = writing.then(() => FS.writeFile({ ...FILE, data: text })).catch(() => { if (onSaveError) onSaveError(); });
+      // 退避に失敗したと分かるのは書き込みの順番が来てからなので、ここでも確かめる
+      writing = writing.then(() => { if (!readFailed) return FS.writeFile({ ...FILE, data: text }); }).catch(() => { if (onSaveError) onSaveError(); });
       return true;
     }
     try {
