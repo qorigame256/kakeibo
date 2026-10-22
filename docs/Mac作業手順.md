@@ -13,7 +13,7 @@
 
 ## 1. 持っていくもの（Windows の Claude が作る）
 
-`家計簿_<日付>_Mac用.zip`（Windows の `C:/Users/kouri/Desktop/家計簿/` 直下）。中身：
+`家計簿_<日付>_Mac用.zip`（Windows の家計簿フォルダ直下）。中身：
 
 | 場所 | 中身 |
 |---|---|
