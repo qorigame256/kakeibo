@@ -83,7 +83,7 @@ cd ~/kakeibo && rsync -a --delete --exclude 'cordova.js' --exclude 'cordova_plug
 | `no such module 'Capacitor'` など、部品が見つからない | `node_modules/@capacitor/filesystem`・`share` が zip から展開されているか（`ls ~/kakeibo/node_modules/@capacitor`） |
 | `requires that Developer Mode be enabled` | §4.2 の1 |
 | 入ったが開くとすぐ閉じる／「信頼されていないデベロッパ」 | §4.2 の3。前に信頼していても、署名の Apple ID が違うともう一度出る |
-| 白い画面のまま | Safari の 開発 > （iPhone の名前）> 家計簿 で中のブラウザのエラーを見る（Mac の Safari で 設定 > 詳細 >「Web デベロッパ用の機能を表示」、iPhone で 設定 > アプリ > Safari > 詳細 > Web インスペクタ をオン） |
+| 白い画面のまま | Safari の 開発 > （iPhone の名前）> みんなと家計簿 で中のブラウザのエラーを見る（Mac の Safari で 設定 > 詳細 >「Web デベロッパ用の機能を表示」、iPhone で 設定 > アプリ > Safari > 詳細 > Web インスペクタ をオン） |
 | `The maximum number of apps for free development profiles has been reached.` | 無料の枠は1台に3本まで。使っていない自作アプリを消す |
 | 7日ほどで起動しなくなった | 無料 Apple ID の制限。Mac に繋いで ▶ を押せば直る（データは残る） |
 
@@ -91,7 +91,7 @@ cd ~/kakeibo && rsync -a --delete --exclude 'cordova.js' --exclude 'cordova_plug
 
 iPhone 15 Pro（縦向き）で。「済」「だめ（何がどうなったか）」を §7 に書く。
 
-1. **起動**：アイコンが緑地に白い「¥」、下の名前が「家計簿」。起動画面のあと入力タブが出る。上（時刻の帯）と下（ホームバー）に画面が隠れていない。
+1. **起動**：アイコンが緑地に白い「¥」、下の名前が「みんなと家計簿」（「…」で切れていたら Windows 側へ伝える）。起動画面のあと入力タブが出る。上（時刻の帯）と下（ホームバー）に画面が隠れていない。
 2. **保存（D24）**：記録を2件入れる → アプリを上へ払って完全に閉じる → 開き直す → 2件残っている。設定タブの分類の名前変更・予算も同じく残る。
 3. **書き出し（D25）**：設定 > バックアップ > 書き出し → 共有シートが開く →「"ファイル"に保存」で保存できる。設定の「最後に書き出した日」が今日になる。
 4. **読み込み**：3 で保存したファイルを、設定 > バックアップ > 読み込み で選べる（ファイルを選ぶ画面が開くか）。同じものなので記録は増えない。

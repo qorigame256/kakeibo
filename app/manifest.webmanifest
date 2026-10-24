@@ -1,6 +1,6 @@
 {
-  "name": "家計簿",
-  "short_name": "家計簿",
+  "name": "みんなと家計簿",
+  "short_name": "みんなと家計簿",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

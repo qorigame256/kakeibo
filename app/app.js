@@ -733,7 +733,7 @@ function openSendCard() {
 // ストア版の住所は capacitor://localhost なので、公開している PWA の住所を渡す（ストアの住所が決まったら差し替える）
 const APP_URL = Native ? "https://qorigame256.github.io/kakeibo/" : new URL("./", location.href).href;
 async function shareCard(card, wrap) {
-  const text = `家計簿アプリのランキング用の成績です（${card.name}・${shortDate(card.at)}）\n` +
+  const text = `みんなと家計簿のランキング用の成績です（${card.name}・${shortDate(card.at)}）\n` +
     `アプリの「ランキング」→「コードを貼る」に、このメッセージをまるごと貼ってください。\n` +
     `${Ranking.encode(card)}\nアプリ：${APP_URL}`;
   // iPhone では共有シートが開き、LINE などを選べる
@@ -1146,7 +1146,7 @@ function moveCat(c, d) {
 
 async function exportData() {
   const payload = JSON.stringify({ app: "kakeibo", exportedAt: new Date().toISOString(), ...data }, null, 1);
-  const name = `家計簿_${today()}.json`;
+  const name = `みんなと家計簿_${today()}.json`;
   const file = new File([payload], name, { type: "application/json" });
   try {
     // iPhone では共有シートが開き、「"ファイル"に保存」や AirDrop で逃がせる。
