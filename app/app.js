@@ -296,6 +296,13 @@ function renderInput() {
     }
   );
   form.querySelector("[name=date]").addEventListener("change", (e) => { draft.date = e.target.value; });
+  // いま形に入れている中身で固定費の登録の画面を開く。毎月の日は選んでいる日付の日にする（記録はしない）
+  const toRec = h(`<button type="button" class="btn sub">固定費にする</button>`);
+  toRec.addEventListener("click", () => {
+    const d = form.querySelector("[name=date]").value;
+    openRecurring(null, { ...form.peek(), day: Number((/^\d{4}-\d{2}-\d{2}$/.test(d) ? d : today()).slice(8)) });
+  });
+  form.querySelector(".actions").prepend(toRec);
   view.appendChild(form);
 
   // よく使う記録（仕様書 D32）：金額があれば押すだけで記録、無ければ形に分類とメモを入れる
@@ -377,7 +384,6 @@ function openSheet(content) {
 function closeSheet() {
   sheet.classList.remove("open");
   sheet.hidden = true; sheetBack.hidden = true;
-  setTimeout(showSkinNews, 300); // 開いていた画面のあいだに手に入れたスキンを、閉じてから知らせる
 }
 sheetBack.addEventListener("click", closeSheet);
 
@@ -799,24 +805,34 @@ function useSkin(id) {
   Skins.apply(id);
   save();
 }
-// 手に入れたスキンを知らせる。ほかの画面が開いているときは、閉じたあとに出す（closeSheet から呼ばれる）
+// 手に入れたスキンを画面の上に知らせ、しばらくすると消す。出ているあいだに増えたら下に足し、消えるまでの時間を数え直す
+const SKIN_NEWS_MS = 7000;
+const skinBanner = document.getElementById("skin-banner");
+let skinBannerTimer = null;
+function hideSkinNews() {
+  clearTimeout(skinBannerTimer);
+  skinBanner.classList.remove("show");
+}
 function showSkinNews() {
-  if (!skinNews.length || !sheet.hidden) return;
+  if (!skinNews.length) return;
   const list = skinNews;
   skinNews = [];
-  const wrap = h(`<div><div class="sheet-head"><h2>新しいスキンを手に入れました</h2><button class="icon-btn" aria-label="閉じる">✕</button></div>
-    <ul class="skin-news"></ul><p class="hint">スキンは「設定」でいつでも変えられます。</p></div>`);
-  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  if (!skinBanner.classList.contains("show")) {
+    skinBanner.innerHTML = `<div class="sb-head"><b>新しいスキンを手に入れました</b><button type="button" class="icon-btn" aria-label="閉じる">✕</button></div><ul class="skin-news"></ul>`;
+    skinBanner.querySelector(".icon-btn").addEventListener("click", hideSkinNews);
+  }
   for (const s of list) {
-    const li = h(`<li>${skinPreview(s)}<span class="sn-main"><b>${esc(s.name)}</b><span class="muted">${esc(s.cond || "")}</span></span><button class="btn primary">使う</button></li>`);
+    const li = h(`<li>${skinPreview(s)}<span class="sn-main"><b>${esc(s.name)}</b><span class="muted">${esc(s.cond || "")}</span></span><button type="button" class="btn primary">使う</button></li>`);
     li.querySelector("button").addEventListener("click", () => {
       useSkin(s.id);
-      closeSheet(); render();
+      hideSkinNews(); render();
       toast(`スキンを「${s.name}」にしました`);
     });
-    wrap.querySelector("ul").appendChild(li);
+    skinBanner.querySelector("ul").appendChild(li);
   }
-  openSheet(wrap);
+  skinBanner.classList.add("show");
+  clearTimeout(skinBannerTimer);
+  skinBannerTimer = setTimeout(hideSkinNews, SKIN_NEWS_MS);
 }
 function renderSkins() {
   const f = Skins.facts(data, today());
@@ -853,8 +869,6 @@ function renderSkins() {
 
 // ---------- 設定タブ ----------
 function renderSettings() {
-  renderSkins();
-
   // 分類
   const csec = h(`<section class="card"><h2>分類</h2>
     <div class="seg2 small"><button data-type="expense">支出</button><button data-type="income">収入</button></div>
@@ -996,6 +1010,8 @@ function renderSettings() {
   });
   view.appendChild(nsec);
 
+  renderSkins();
+
   // バックアップ
   const last = data.settings.lastExport;
   const overdue = backupOverdue();
@@ -1013,15 +1029,15 @@ function renderSettings() {
   view.appendChild(ksec);
 }
 
-// 固定費の登録・変更（id が null なら新しく足す）
-function openRecurring(id) {
+// 固定費の登録・変更（id が null なら新しく足す。init は入力タブの形の中身）
+function openRecurring(id, init) {
   const r = id ? data.recurring.find((x) => x.id === id) : null;
   const wrap = h(`<div><div class="sheet-head"><h2>${r ? "固定費の変更" : "固定費を足す"}</h2><button class="icon-btn" aria-label="閉じる">✕</button></div></div>`);
   wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
   const next = h(`<p class="hint"></p>`);
   wrap.appendChild(next);
   const form = entryForm(
-    r ? { ...r } : { type: "expense", cat: null, amount: null, memo: "", day: Number(today().slice(8)), variable: false },
+    r ? { ...r } : { type: "expense", cat: null, amount: null, memo: "", day: Number(today().slice(8)), variable: false, ...init },
     {
       recurring: true,
       saveLabel: r ? "保存" : "登録する",
