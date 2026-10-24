@@ -182,7 +182,7 @@ const Store = (() => {
     const recIds = new Set(data.recurring.map((r) => r.id));
     for (const r of arr(incoming.recurring)) {
       if (!isRecurring(r) || recIds.has(r.id)) continue;
-      const add = { id: r.id, type: r.type, cat: r.cat, amount: r.amount, day: r.day, memo: str(r.memo), variable: r.variable === true, next: r.next };
+      const add = { id: r.id, type: r.type, cat: r.cat, amount: r.amount, day: r.day, memo: str(r.memo), variable: r.variable === true, shift: r.shift || "none", next: r.next };
       // 古いバックアップの next のままだと、そのあと入った月の分をまた入れてしまうので、入っている最後の月の次まで進める
       for (const e of data.entries) {
         if (e.rec === r.id && e.date.slice(0, 7) >= add.next) add.next = nextKey(e.date.slice(0, 7));
@@ -209,8 +209,11 @@ const Store = (() => {
   function isRecurring(r) {
     return r && typeof r.id === "string" && (r.type === "expense" || r.type === "income") &&
       typeof r.cat === "string" && isAmount(r.amount) &&
-      Number.isInteger(r.day) && r.day >= 1 && r.day <= 31 && isMonth(r.next);
+      Number.isInteger(r.day) && r.day >= 1 && r.day <= 31 && isMonth(r.next) &&
+      (r.shift === undefined || SHIFTS.includes(r.shift));
   }
+  // 固定費の日が休日のとき：none＝そのまま／before＝前の平日／after＝後の平日（無いものは none）
+  const SHIFTS = ["none", "before", "after"];
 
   // ---------- 固定費 ----------
   // 月 key（YYYY-MM）の day 日。月末を越える日はその月の末日にする
@@ -219,22 +222,70 @@ const Store = (() => {
     const last = new Date(y, m, 0).getDate();
     return `${key}-${String(Math.min(day, last)).padStart(2, "0")}`;
   }
+  // ---------- 休日（土日・祝日・12/31〜1/3） ----------
+  // 祝日は 2026 年時点の法律の決まりで計算する（特例で動いた年は合わない。固定費は登録した日から先しか使わないので足りる）
+  const ymd = (y, m, d) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const holidayCache = new Map();
+  function holidays(y) {
+    if (holidayCache.has(y)) return holidayCache.get(y);
+    const set = new Set();
+    // m 月の n 番目の月曜
+    const monday = (m, n) => { const w = new Date(y, m - 1, 1).getDay(); return 1 + ((8 - w) % 7) + (n - 1) * 7; };
+    const spring = Math.floor(20.8431 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4));
+    const autumn = Math.floor(23.2488 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4));
+    for (const [m, d] of [[1, 1], [1, monday(1, 2)], [2, 11], [2, 23], [3, spring], [4, 29], [5, 3], [5, 4], [5, 5],
+      [7, monday(7, 3)], [8, 11], [9, monday(9, 3)], [9, autumn], [10, monday(10, 2)], [11, 3], [11, 23]]) set.add(ymd(y, m, d));
+    const base = [...set].sort();
+    for (const s of base) {
+      const [, m, d] = s.split("-").map(Number);
+      // 振替休日：日曜の祝日のあと、最初の祝日でない日
+      if (new Date(y, m - 1, d).getDay() === 0) {
+        let n = d + 1;
+        while (set.has(ymd(y, m, n))) n++;
+        set.add(ymd(y, m, n));
+      }
+      // 国民の休日：祝日にはさまれた祝日でない日
+      const two = new Date(y, m - 1, d + 2);
+      if (base.includes(ymd(two.getFullYear(), two.getMonth() + 1, two.getDate())) && !set.has(ymd(y, m, d + 1))) set.add(ymd(y, m, d + 1));
+    }
+    holidayCache.set(y, set);
+    return set;
+  }
+  function isHoliday(s) {
+    const [y, m, d] = s.split("-").map(Number);
+    const w = new Date(y, m - 1, d).getDay();
+    return w === 0 || w === 6 || (m === 12 && d === 31) || (m === 1 && d <= 3) || holidays(y).has(s);
+  }
+  function addDays(s, n) {
+    const [y, m, d] = s.split("-").map(Number);
+    const t = new Date(y, m - 1, d + n);
+    return ymd(t.getFullYear(), t.getMonth() + 1, t.getDate());
+  }
+  // 固定費 r の月 key の分が入る日（休日なら shift のとおり前か後の平日へ。月をまたいでもそのまま）
+  function recDue(r, key) {
+    let s = recDate(key, r.day);
+    const step = r.shift === "before" ? -1 : r.shift === "after" ? 1 : 0;
+    if (step) while (isHoliday(s)) s = addDays(s, step);
+    return s;
+  }
   function nextKey(key) {
     const [y, m] = key.split("-").map(Number);
     return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
   }
-  // 登録した日から見て最初に入る月。その月の日がまだ来ていなければ今月（今日も含む）、過ぎていれば来月
-  function firstRecMonth(day, todayStr) {
-    const key = todayStr.slice(0, 7);
-    return recDate(key, day) >= todayStr ? key : nextKey(key);
+  // 登録した日から見て最初に入る月。その月の日がまだ来ていなければ今月（今日も含む）、過ぎていれば来月。
+  // 休日で前の平日へずらすと来月の分も過ぎていることがある（10/31 に登録した「1日・前の平日」の 11月分は 10/30）ので、来るまで進める
+  function firstRecMonth(r, todayStr) {
+    let key = todayStr.slice(0, 7);
+    while (recDue(r, key) < todayStr) key = nextKey(key);
+    return key;
   }
   // 今日までに来た固定費の記録を作る。r.next（次に入れる月）を進めるので、消した記録が戻ることはない。作った件数を返す
   function applyRecurring(data, todayStr) {
     let n = 0;
     for (const r of data.recurring) {
       if (!isRecurring(r)) continue;
-      while (recDate(r.next, r.day) <= todayStr) {
-        const e = { id: newId(), type: r.type, date: recDate(r.next, r.day), amount: r.amount, cat: r.cat, memo: r.memo || "", createdAt: new Date().toISOString(), rec: r.id };
+      while (recDue(r, r.next) <= todayStr) {
+        const e = { id: newId(), type: r.type, date: recDue(r, r.next), amount: r.amount, cat: r.cat, memo: r.memo || "", createdAt: new Date().toISOString(), rec: r.id };
         if (r.variable) e.check = true;
         data.entries.push(e);
         r.next = nextKey(r.next);
@@ -244,5 +295,5 @@ const Store = (() => {
     return n;
   }
 
-  return { init, load, save, onSaveError: (fn) => { onSaveError = fn; }, newId, merge, fresh, recDate, firstRecMonth, applyRecurring };
+  return { init, load, save, onSaveError: (fn) => { onSaveError = fn; }, newId, merge, fresh, recDate, recDue, nextKey, isHoliday, firstRecMonth, applyRecurring };
 })();

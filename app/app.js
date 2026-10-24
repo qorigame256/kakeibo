@@ -120,7 +120,7 @@ function render() {
 
 // ---------- 入力の形（入力タブと修正の画面で共通） ----------
 // init = { type, date, cat, amount, memo }。onSave(値) が true を返したら形を空に戻す
-// recurring: true のときは固定費の登録用（日付の代わりに「毎月◯日」と「額が変わる」を出す。init に day・variable）
+// recurring: true のときは固定費の登録用（日付の代わりに「毎月◯日」と「額が変わる」「休日のとき」を出す。init に day・variable・shift）
 // preset: true のときはよく使う記録の登録用（日付なし。金額は空でもよく、空なら amount は null）
 function entryForm(init, { onSave, onDelete, saveLabel, recurring, preset }) {
   const days = Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${i + 1}日</option>`).join("");
@@ -139,7 +139,8 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring, preset }) {
       <label class="field grow"><span>メモ</span><input name="memo" maxlength="100" autocomplete="off" placeholder="${preset ? "ボタンの名前にもなります" : "任意"}"></label>
     </div>
     <div class="memo-sugg" aria-label="前に使ったメモ"></div>
-    ${recurring ? `<label class="check"><input type="checkbox" name="variable"><span>毎月額が変わる（目安額で入れて「要確認」を付ける）</span></label>
+    ${recurring ? `<label class="field"><span>休日（土日・祝日・12/31〜1/3）のとき</span><select name="shift"><option value="none">そのままの日に入れる</option><option value="before">前の平日に入れる</option><option value="after">後の平日に入れる</option></select></label>
+      <label class="check"><input type="checkbox" name="variable"><span>毎月額が変わる（目安額で入れて「要確認」を付ける）</span></label>
       <p class="hint">29〜31日を選ぶと、その日が無い月は月末に入ります。</p>` : ""}
     ${preset ? '<p class="hint">金額を空にすると、押したときは分類とメモだけが入り、金額はそのつど入れます。</p>' : ""}
     <div class="actions">
@@ -154,6 +155,7 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring, preset }) {
   if (recurring) {
     box.querySelector("[name=day]").value = String(st.day || 1);
     box.querySelector("[name=variable]").checked = !!st.variable;
+    box.querySelector("[name=shift]").value = st.shift || "none";
   } else if (date) {
     date.value = st.date;
   }
@@ -229,6 +231,7 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring, preset }) {
     if (recurring) {
       v.day = Number(box.querySelector("[name=day]").value);
       v.variable = box.querySelector("[name=variable]").checked;
+      v.shift = box.querySelector("[name=shift]").value;
     } else if (!preset) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date.value)) { toast("日付を入れてください"); return; }
       v.date = date.value;
@@ -375,7 +378,11 @@ function entryRow(e, withDate) {
 // ---------- 修正の画面（下から出る） ----------
 const sheet = document.getElementById("sheet");
 const sheetBack = document.getElementById("sheet-back");
+// iPhone は下の画面の入力欄を押すと、キーボードのぶん後ろのページを下へずらし、閉じてもそのまま残す。
+// 開いたときの位置を覚えておき、閉じたら戻す（キーボードが引っ込むのを待ってもう一度戻す）
+let sheetScrollY = 0;
 function openSheet(content) {
+  if (sheet.hidden) sheetScrollY = window.scrollY;
   sheet.innerHTML = "";
   sheet.appendChild(content);
   sheet.hidden = false; sheetBack.hidden = false;
@@ -384,6 +391,10 @@ function openSheet(content) {
 function closeSheet() {
   sheet.classList.remove("open");
   sheet.hidden = true; sheetBack.hidden = true;
+  if (document.activeElement) document.activeElement.blur();
+  const y = sheetScrollY;
+  requestAnimationFrame(() => window.scrollTo(0, y));
+  setTimeout(() => window.scrollTo(0, y), 350);
 }
 sheetBack.addEventListener("click", closeSheet);
 
@@ -557,7 +568,12 @@ function renderBudgets(byCat) {
     const planned = new Map();
     if (now) {
       for (const r of data.recurring) {
-        if (r.type === "expense" && r.next === month && Store.recDate(r.next, r.day) > t) planned.set(r.cat, (planned.get(r.cat) || 0) + r.amount);
+        if (r.type !== "expense") continue;
+        // 休日でずらすと、来月の分が今月に入ることもあるので、まだ入れていない月を少し先まで見る
+        for (let key = r.next, i = 0; i < 3; i++, key = Store.nextKey(key)) {
+          const due = Store.recDue(r, key);
+          if (due.slice(0, 7) === month && due > t) planned.set(r.cat, (planned.get(r.cat) || 0) + r.amount);
+        }
       }
     }
     let sumB = 0, sumU = 0, sumP = 0;
@@ -955,7 +971,7 @@ function renderSettings() {
   for (const r of recs) {
     const li = h(`<li><button class="rec-row ${r.type}">
       <span class="rr-day">${r.day}日</span>
-      <span class="er-main"><span class="er-cat">${esc(catName(r.type, r.cat))}${r.variable ? '<span class="tag">額が変わる</span>' : ""}</span>${r.memo ? `<span class="er-memo">${esc(r.memo)}</span>` : ""}</span>
+      <span class="er-main"><span class="er-cat">${esc(catName(r.type, r.cat))}${r.shift === "before" ? '<span class="tag">休日は前</span>' : r.shift === "after" ? '<span class="tag">休日は後</span>' : ""}${r.variable ? '<span class="tag">額が変わる</span>' : ""}</span>${r.memo ? `<span class="er-memo">${esc(r.memo)}</span>` : ""}</span>
       <span class="er-amt">${r.type === "income" ? "+" : ""}${yen(r.amount)}</span>
     </button></li>`);
     li.querySelector("button").addEventListener("click", () => openRecurring(r.id));
@@ -1037,13 +1053,13 @@ function openRecurring(id, init) {
   const next = h(`<p class="hint"></p>`);
   wrap.appendChild(next);
   const form = entryForm(
-    r ? { ...r } : { type: "expense", cat: null, amount: null, memo: "", day: Number(today().slice(8)), variable: false, ...init },
+    r ? { ...r } : { type: "expense", cat: null, amount: null, memo: "", day: Number(today().slice(8)), variable: false, shift: "none", ...init },
     {
       recurring: true,
       saveLabel: r ? "保存" : "登録する",
       onSave: (v) => {
         // まだ来ていない日を選び直したときに、過ぎた月の分をさかのぼって入れないよう、次に入れる月は「今から最初に来る月」より前にしない
-        const first = Store.firstRecMonth(v.day, today());
+        const first = Store.firstRecMonth(v, today());
         if (r) {
           Object.assign(r, v);
           if (r.next < first) r.next = first;
@@ -1051,7 +1067,7 @@ function openRecurring(id, init) {
           data.recurring.push({ id: "r" + Store.newId(), ...v, next: first });
         }
         save(); closeSheet(); render();
-        toast(r ? "固定費を変えました" : `固定費を登録しました（最初は ${dayLabel(Store.recDate(first, v.day))}）`);
+        toast(r ? "固定費を変えました" : `固定費を登録しました（最初は ${dayLabel(Store.recDue(v, first))}）`);
         runRecurring(); // 今日の日を選んだときは、その場で入れる
         return false;
       },
@@ -1063,15 +1079,19 @@ function openRecurring(id, init) {
       } : null,
     }
   );
-  // 選んだ日から「次に入る日」を出す
+  // 選んだ日から「次に入る日」を出す（休日でずれたら、何月の分かも添える）
   const daySel = form.querySelector("[name=day]");
+  const shiftSel = form.querySelector("[name=shift]");
   const paintNext = () => {
-    const d = Number(daySel.value);
-    let key = Store.firstRecMonth(d, today());
+    const v = { day: Number(daySel.value), shift: shiftSel.value };
+    let key = Store.firstRecMonth(v, today());
     if (r && r.next > key) key = r.next;
-    next.textContent = `次に入るのは ${monthTitle(key)}${dayLabel(Store.recDate(key, d)).replace(/^\d+月/, "")} です。`;
+    const due = Store.recDue(v, key);
+    const plain = Store.recDate(key, v.day);
+    next.textContent = `次に入るのは ${due.slice(0, 4)}年${dayLabel(due)} です${due !== plain ? `（${dayLabel(plain)}が休日のため）` : ""}。`;
   };
   daySel.addEventListener("change", paintNext);
+  shiftSel.addEventListener("change", paintNext);
   paintNext();
   wrap.appendChild(form);
   openSheet(wrap);
