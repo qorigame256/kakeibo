@@ -341,3 +341,36 @@ main {
 .b-pace.warn { color: var(--over); }
 #toast.has-act { pointer-events: auto; display: flex; align-items: center; gap: 14px; width: max-content; }
 #toast button { border: 0; background: none; color: #fff; font-weight: 700; text-decoration: underline; padding: 4px 0; flex: none; }
+
+/* 固定費だけの収入・支出・差（集計と設定の固定費） */
+.fixed-sum { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 13px; color: var(--text2); margin: -6px 0 14px; padding: 0 2px; }
+.card .fixed-sum { margin: 8px 0 0; padding-top: 8px; border-top: 2px solid var(--line); }
+.fixed-sum .fs-title { flex-basis: 100%; color: var(--muted); }
+.fixed-sum b { font-variant-numeric: tabular-nums; color: var(--text); }
+.fixed-sum .inc { color: var(--income); }
+.fixed-sum .neg { color: var(--over); }
+
+/* 口座・カード（仕様書 D36） */
+.er-amt.neg { color: var(--over); }
+.big-bal { display: flex; justify-content: space-between; align-items: baseline; margin: 4px 0 10px; }
+.big-bal span { color: var(--muted); font-size: 13px; }
+.big-bal b { font-size: 24px; font-variant-numeric: tabular-nums; }
+.big-bal .neg { color: var(--over); }
+.align { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; margin-bottom: 8px; }
+.sub-h { font-size: 14px; margin: 14px 0 4px; }
+.move-list, .bill-list { list-style: none; margin: 0; padding: 0; }
+.move-list li { display: grid; grid-template-columns: auto 1fr auto; gap: 0 8px; align-items: baseline; padding: 7px 2px; border-top: 1px solid var(--line); font-size: 14px; }
+.move-list li:first-child { border-top: 0; }
+.move-list li.muted { display: block; }
+.move-list li:has(> .move-row) { display: block; padding: 0; }
+.move-row { display: grid; grid-template-columns: auto 1fr auto; gap: 0 8px; align-items: baseline; width: 100%; border: 0; background: none; padding: 7px 2px; text-align: left; font: inherit; font-size: 14px; color: inherit; }
+.mv-date { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.mv-main { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mv-amt { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mv-amt.inc { color: var(--income); }
+.mv-after { grid-column: 3; text-align: right; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bill-list .bill { padding: 8px 0; border-top: 1px solid var(--line); }
+.bill-list .bill:first-child { border-top: 0; }
+.bl-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 15px; }
+.bl-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.bill.paid .bl-top > span { color: var(--text2); }

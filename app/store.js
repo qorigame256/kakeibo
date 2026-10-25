@@ -24,6 +24,9 @@ const Store = (() => {
       friends: [], // ランキングの友だちの成績（仕様書 D30）
       skins: {}, // 手に入れたスキンと手に入れた日（仕様書 D31）
       presets: [], // よく使う記録（仕様書 D32）
+      accounts: [], // 銀行口座とカード（仕様書 D36）
+      transfers: [], // 口座と現金のあいだのお金の移動（支出・収入には数えない）
+      bills: {}, // カードの引き落とし額を手で直したもの（"カードの id:引き落としの月" → 額）
       settings: { lastExport: null, nickname: "", myId: null, shareAmount: "hidden", skin: "basic", startedAt: null, backupAskedAt: null },
     };
   }
@@ -74,6 +77,9 @@ const Store = (() => {
         friends: Array.isArray(d.friends) ? d.friends : [],
         skins: d.skins && typeof d.skins === "object" && !Array.isArray(d.skins) ? d.skins : {},
         presets: Array.isArray(d.presets) ? d.presets.filter(isPreset) : [],
+        accounts: Array.isArray(d.accounts) ? d.accounts.filter(isAccount) : [],
+        transfers: Array.isArray(d.transfers) ? d.transfers.filter(isTransfer) : [],
+        bills: cleanBills(d.bills),
         settings: { ...base.settings, ...(d.settings || {}) },
       };
     } catch (e) {
@@ -159,6 +165,7 @@ const Store = (() => {
       const add = { id: e.id, type: e.type, date: e.date, amount: e.amount, cat: e.cat, memo: str(e.memo), createdAt: str(e.createdAt) || null };
       if (typeof e.rec === "string") add.rec = e.rec;
       if (e.check === true) add.check = true;
+      if (typeof e.acct === "string" && e.acct) add.acct = e.acct;
       data.entries.push(add);
       have.add(e.id);
       result.added++;
@@ -183,6 +190,7 @@ const Store = (() => {
     for (const r of arr(incoming.recurring)) {
       if (!isRecurring(r) || recIds.has(r.id)) continue;
       const add = { id: r.id, type: r.type, cat: r.cat, amount: r.amount, day: r.day, memo: str(r.memo), variable: r.variable === true, shift: r.shift || "none", next: r.next };
+      if (typeof r.acct === "string" && r.acct) add.acct = r.acct;
       // 古いバックアップの next のままだと、そのあと入った月の分をまた入れてしまうので、入っている最後の月の次まで進める
       for (const e of data.entries) {
         if (e.rec === r.id && e.date.slice(0, 7) >= add.next) add.next = nextKey(e.date.slice(0, 7));
@@ -194,10 +202,46 @@ const Store = (() => {
     const preIds = new Set(data.presets.map((p) => p.id));
     for (const p of arr(incoming.presets)) {
       if (!isPreset(p) || preIds.has(p.id)) continue;
-      data.presets.push({ id: p.id, type: p.type, cat: p.cat, amount: p.amount, memo: str(p.memo) });
+      const add = { id: p.id, type: p.type, cat: p.cat, amount: p.amount, memo: str(p.memo) };
+      if (typeof p.acct === "string" && p.acct) add.acct = p.acct;
+      data.presets.push(add);
       preIds.add(p.id);
     }
+    // 口座・カード・お金の移動も今に無い id だけ足し、手で直した引き落とし額は今に無いものだけ入れる
+    const accIds = new Set(data.accounts.map((a) => a.id));
+    for (const a of arr(incoming.accounts)) {
+      if (isAccount(a) && !accIds.has(a.id)) { data.accounts.push(a); accIds.add(a.id); }
+    }
+    const trIds = new Set(data.transfers.map((t) => t.id));
+    for (const t of arr(incoming.transfers)) {
+      if (!isTransfer(t) || trIds.has(t.id)) continue;
+      data.transfers.push({ id: t.id, date: t.date, amount: t.amount, from: t.from, to: t.to, memo: str(t.memo), createdAt: str(t.createdAt) || null });
+      trIds.add(t.id);
+    }
+    for (const [k, v] of Object.entries(cleanBills(incoming.bills))) if (data.bills[k] == null) data.bills[k] = v;
     return result;
+  }
+
+  // 銀行口座：start＝since の日の朝の残高。カード：close＝締め日（31 は月末）、payDay＝引き落とし日、payMonth＝締めの何か月後か、bank＝引き落とし口座
+  function isAccount(a) {
+    if (!a || typeof a.id !== "string" || typeof a.name !== "string" || !a.name) return false;
+    if (a.deleted !== undefined && a.deleted !== true) return false;
+    const day = (v) => Number.isInteger(v) && v >= 1 && v <= 31;
+    if (a.kind === "bank") return Number.isInteger(a.start) && Math.abs(a.start) <= AMOUNT_MAX && isDate(a.since);
+    if (a.kind === "card") return day(a.close) && day(a.payDay) && (a.payMonth === 1 || a.payMonth === 2) && typeof a.bank === "string";
+    return false;
+  }
+  function isTransfer(t) {
+    return t && typeof t.id === "string" && isDate(t.date) && isAmount(t.amount) &&
+      typeof t.from === "string" && typeof t.to === "string" && t.from !== t.to;
+  }
+  function cleanBills(b) {
+    const out = {};
+    if (!b || typeof b !== "object" || Array.isArray(b)) return out;
+    for (const [k, v] of Object.entries(b)) {
+      if (/^[^:]+:\d{4}-(0[1-9]|1[0-2])$/.test(k) && Number.isInteger(v) && v >= 0 && v <= AMOUNT_MAX) out[k] = v;
+    }
+    return out;
   }
 
   // 金額は空（null）でもよい。そのときは押すと入力の形に分類とメモだけ入る
@@ -287,6 +331,7 @@ const Store = (() => {
       while (recDue(r, r.next) <= todayStr) {
         const e = { id: newId(), type: r.type, date: recDue(r, r.next), amount: r.amount, cat: r.cat, memo: r.memo || "", createdAt: new Date().toISOString(), rec: r.id };
         if (r.variable) e.check = true;
+        if (r.acct) e.acct = r.acct;
         data.entries.push(e);
         r.next = nextKey(r.next);
         n++;
@@ -295,5 +340,5 @@ const Store = (() => {
     return n;
   }
 
-  return { init, load, save, onSaveError: (fn) => { onSaveError = fn; }, newId, merge, fresh, recDate, recDue, nextKey, isHoliday, firstRecMonth, applyRecurring };
+  return { init, load, save, onSaveError: (fn) => { onSaveError = fn; }, newId, merge, fresh, recDate, recDue, nextKey, addDays, isHoliday, firstRecMonth, applyRecurring };
 })();

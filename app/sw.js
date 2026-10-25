@@ -3,12 +3,13 @@
 // 同じ住所（qorigame256.github.io）にはほかのアプリも同居し、取っておく場所を共有している。
 // 消すのも横取りするのも、名前が kakeibo- で始まるもの・/kakeibo/ の下だけに限る（ほかのアプリの圏外用を消さないため）。
 const PREFIX = "kakeibo-";
-const CACHE = PREFIX + "v11";
+const CACHE = PREFIX + "v12";
 const FILES = [
   "./",
   "index.html",
   "style.css",
   "store.js",
+  "accounts.js",
   "charts.js",
   "ranking.js",
   "skins.js",

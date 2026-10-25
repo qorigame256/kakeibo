@@ -49,6 +49,23 @@ function catName(type, id) {
   return c.deleted ? `${c.name}（削除済み）` : c.name;
 }
 const activeCats = (type) => data.categories[type].filter((c) => !c.deleted);
+// 銀行口座とカード（仕様書 D36）。kind は bank／card
+const activeAccts = (kind) => data.accounts.filter((a) => a.kind === kind && !a.deleted);
+const findAcct = (id) => data.accounts.find((a) => a.id === id);
+function acctName(id) {
+  if (id === Accounts.CASH) return "現金";
+  const a = findAcct(id);
+  if (!a) return "（不明な口座）";
+  return a.deleted ? `${a.name}（削除済み）` : a.name;
+}
+const signed = (n) => (n > 0 ? "+" : n < 0 ? "−" : "") + yen(Math.abs(n));
+// 払い方・入る先の選択肢（支出はカードも、収入は銀行だけ）。cur が削除済みでもその1つは出す
+function acctOptions(type, cur) {
+  const list = [...activeAccts("bank"), ...(type === "expense" ? activeAccts("card") : [])];
+  const c = findAcct(cur);
+  if (c && c.deleted && (c.kind === "bank" || type === "expense")) list.push(c);
+  return `<option value="">現金・そのほか</option>` + list.map((a) => `<option value="${esc(a.id)}">${esc(acctName(a.id))}</option>`).join("");
+}
 function parseAmount(s) {
   const t = String(s).replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/[,，\s円]/g, "");
   if (!/^\d+$/.test(t)) return null;
@@ -139,6 +156,7 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring, preset }) {
       <label class="field grow"><span>メモ</span><input name="memo" maxlength="100" autocomplete="off" placeholder="${preset ? "ボタンの名前にもなります" : "任意"}"></label>
     </div>
     <div class="memo-sugg" aria-label="前に使ったメモ"></div>
+    <label class="field acct-field"><span></span><select name="acct"></select></label>
     ${recurring ? `<label class="field"><span>休日（土日・祝日・12/31〜1/3）のとき</span><select name="shift"><option value="none">そのままの日に入れる</option><option value="before">前の平日に入れる</option><option value="after">後の平日に入れる</option></select></label>
       <label class="check"><input type="checkbox" name="variable"><span>毎月額が変わる（目安額で入れて「要確認」を付ける）</span></label>
       <p class="hint">29〜31日を選ぶと、その日が無い月は月末に入ります。</p>` : ""}
@@ -161,8 +179,21 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring, preset }) {
   }
   memo.value = st.memo || "";
   let memos = memoIndex();
+  const acct = box.querySelector("[name=acct]");
+  acct.addEventListener("change", () => { st.acct = acct.value; if (init.onAcctChange) init.onAcctChange(st.acct); });
+
+  // 払い方：口座もカードも登録していなければ出さない。収入にカードは選べないので「現金・そのほか」に戻す
+  function paintAcct() {
+    if (st.type === "income" && findAcct(st.acct)?.kind === "card") st.acct = "";
+    acct.innerHTML = acctOptions(st.type, st.acct);
+    acct.value = st.acct && acct.querySelector(`option[value="${CSS.escape(st.acct)}"]`) ? st.acct : "";
+    st.acct = acct.value;
+    box.querySelector(".acct-field span").textContent = st.type === "income" ? "入る先" : "払い方";
+    box.querySelector(".acct-field").hidden = acct.options.length < 2;
+  }
 
   function paint() {
+    paintAcct();
     box.querySelectorAll(".seg2 button").forEach((b) => {
       b.classList.toggle("on", b.dataset.type === st.type);
       b.setAttribute("aria-checked", b.dataset.type === st.type);
@@ -228,6 +259,7 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring, preset }) {
     if (n == null && !(preset && !amount.value.trim())) { toast("金額を 1〜99,999,999 の数字で入れてください"); amount.focus(); return; }
     if (!st.cat) { toast("分類を選んでください"); return; }
     const v = { type: st.type, cat: st.cat, amount: n, memo: memo.value.trim() };
+    if (st.acct) v.acct = st.acct; // 無ければ現金・そのほか（呼ぶ側で前の acct を消す）
     if (recurring) {
       v.day = Number(box.querySelector("[name=day]").value);
       v.variable = box.querySelector("[name=variable]").checked;
@@ -248,11 +280,12 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring, preset }) {
   box.fill = (v) => {
     if (v.type !== st.type && init.onTypeChange) init.onTypeChange(v.type);
     st.type = v.type; st.cat = v.cat;
+    if (v.acct !== undefined) { st.acct = v.acct; if (init.onAcctChange) init.onAcctChange(st.acct); }
     if (v.amount) amount.value = v.amount.toLocaleString("ja-JP");
     memo.value = v.memo || "";
     paint();
   };
-  box.peek = () => ({ type: st.type, cat: st.cat, amount: parseAmount(amount.value), memo: memo.value.trim() });
+  box.peek = () => ({ type: st.type, cat: st.cat, amount: parseAmount(amount.value), memo: memo.value.trim(), acct: st.acct || "" });
   box.refreshMemos = () => { memos = memoIndex(); paintSugg(); };
   paint();
   return box;
@@ -283,15 +316,18 @@ function memoIndex() {
 // ---------- 入力タブ ----------
 function renderInput() {
   const form = entryForm(
-    { ...draft, amount: null, memo: "", onTypeChange: (t) => { draft.type = t; } },
+    { ...draft, amount: null, memo: "", onTypeChange: (t) => { draft.type = t; }, onAcctChange: (a) => { draft.acct = a; } },
     {
       saveLabel: "記録する",
       onSave: (v) => {
+        // 同じ日・同じ分類・同じ金額の記録がもうあれば、二重に入れていないか1回だけ聞く
+        const same = data.entries.find((e) => e.type === v.type && e.date === v.date && e.cat === v.cat && e.amount === v.amount);
+        if (same && !confirm(`${dayLabel(v.date)}に「${catName(v.type, v.cat)} ${yen(v.amount)}${same.memo ? `（${same.memo}）` : ""}」の記録がもうあります。\nもう1件入れますか？`)) return false;
         data.entries.push({ id: Store.newId(), ...v, createdAt: new Date().toISOString() });
         // 保存できなければ記録を取り消し、入力も残す（そのまま押し直せるように）。
         // ストア版は書き込みを待たず true が返るので、ここには来ない（失敗した記録は次の保存でまとめて書かれる）
         if (!save()) { data.entries.pop(); return false; }
-        draft = { type: v.type, date: v.date, cat: null };
+        draft = { type: v.type, date: v.date, cat: null, acct: v.acct || "" };
         toast(`${catName(v.type, v.cat)} ${yen(v.amount)}を記録しました`);
         renderRecent();
         return true;
@@ -324,6 +360,7 @@ function renderInput() {
       const d = form.querySelector("[name=date]").value;
       const date = /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : today();
       const e = { id: Store.newId(), type: p.type, date, amount: p.amount, cat: p.cat, memo: p.memo, createdAt: new Date().toISOString() };
+      if (p.acct) e.acct = p.acct;
       data.entries.push(e);
       if (!save()) { data.entries.pop(); return; }
       renderRecent();
@@ -367,7 +404,7 @@ function entryRow(e, withDate) {
   const sign = e.type === "income" ? "+" : "";
   const row = h(`<button class="entry-row ${e.type}">
     <span class="dot" style="${e.type === "expense" ? `background:${expenseColor(e.cat)}` : "visibility:hidden"}"></span>
-    <span class="er-main"><span class="er-cat">${esc(catName(e.type, e.cat))}${e.check ? '<span class="tag warn">要確認</span>' : e.rec ? '<span class="tag">固定費</span>' : ""}</span>${e.memo ? `<span class="er-memo">${esc(e.memo)}</span>` : ""}</span>
+    <span class="er-main"><span class="er-cat">${esc(catName(e.type, e.cat))}${e.check ? '<span class="tag warn">要確認</span>' : e.rec ? '<span class="tag">固定費</span>' : ""}${e.acct ? `<span class="tag">${esc(acctName(e.acct))}</span>` : ""}</span>${e.memo ? `<span class="er-memo">${esc(e.memo)}</span>` : ""}</span>
     ${withDate ? `<span class="er-date">${e.date.slice(0, 4) !== today().slice(0, 4) ? e.date.slice(0, 4) + "年" : ""}${esc(dayLabel(e.date))}</span>` : ""}
     <span class="er-amt">${sign}${yen(e.amount)}</span>
   </button>`);
@@ -405,11 +442,12 @@ function openEdit(id) {
   wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
   if (e.check) wrap.appendChild(h(`<p class="hint">固定費の目安額で入った記録です。実際の額に直して保存すると「要確認」が消えます。</p>`));
   wrap.appendChild(entryForm(
-    { type: e.type, date: e.date, cat: e.cat, amount: e.amount, memo: e.memo },
+    { type: e.type, date: e.date, cat: e.cat, amount: e.amount, memo: e.memo, acct: e.acct || "" },
     {
       saveLabel: "保存",
       onSave: (v) => {
         Object.assign(e, v);
+        if (!v.acct) delete e.acct;
         delete e.check;
         save(); closeSheet(); render();
         toast("修正しました");
@@ -515,6 +553,7 @@ function yearNav() {
 }
 
 function renderSummary() {
+  renderAccounts();
   const isYear = sumMode === "year";
   const seg = h(`<div class="seg2 small"><button data-m="month">月</button><button data-m="year">年</button></div>`);
   seg.querySelectorAll("button").forEach((b) => {
@@ -531,6 +570,9 @@ function renderSummary() {
   const list = isYear ? data.entries.filter((e) => e.date.startsWith(year + "-")) : monthEntries(month);
   const t = totals(list);
   view.appendChild(totalsRow(t));
+  // 固定費から入った記録だけの収入・支出・差（固定費を登録していないときは出さない）
+  const fixed = list.filter((e) => e.rec);
+  if (fixed.length || data.recurring.length) view.appendChild(fixedSum(totals(fixed), `${isYear ? "この年" : "この月"}のうち固定費`));
 
   // 分類ごとの支出
   const byCat = new Map();
@@ -553,6 +595,45 @@ function renderSummary() {
     <div class="bars-wrap"></div><p class="readout"></p></section>`);
   view.appendChild(msec);
   Charts.bars(msec.querySelector(".bars-wrap"), msec.querySelector(".readout"), months, selected, msec.querySelector("h2").textContent);
+}
+
+// 固定費だけで見た収入・支出・差の1行
+function fixedSum(t, title) {
+  const diff = t.income - t.expense;
+  return h(`<div class="fixed-sum"><span class="fs-title">${esc(title)}</span>
+    <span>収入 <b class="inc">${yen(t.income)}</b></span><span>支出 <b>${yen(t.expense)}</b></span><span>差 <b class="${diff < 0 ? "neg" : ""}">${diff >= 0 ? "+" : "−"}${yen(Math.abs(diff))}</b></span></div>`);
+}
+
+// 口座の残高（仕様書 D36）。口座もカードも登録していなければ出さない
+function renderAccounts() {
+  const banks = activeAccts("bank"), cards = activeAccts("card");
+  if (!banks.length && !cards.length) return;
+  const t = today();
+  const sec = h(`<section class="card"><h2>口座の残高（今日）</h2><ul class="rec-list"></ul></section>`);
+  const ul = sec.querySelector("ul");
+  for (const b of banks) {
+    const bal = Accounts.balance(data, b, t);
+    const next = Accounts.upcoming(data, b, t)[0];
+    const li = h(`<li><button class="rec-row">
+      <span class="er-main"><span class="er-cat">${esc(b.name)}</span>${next ? `<span class="er-memo">${esc(shortDate(next.bill.pay))}に${esc(next.card.name)} ${yen(next.bill.amount)}${next.bill.state === "open" ? "〜" : ""}</span>` : ""}</span>
+      <span class="er-amt${bal < 0 ? " neg" : ""}">${signed(bal).replace(/^\+/, "")}</span></button></li>`);
+    li.querySelector("button").addEventListener("click", () => openBank(b.id));
+    ul.appendChild(li);
+  }
+  for (const c of cards) {
+    const next = Accounts.bills(data, c, t).find((bl) => bl.state !== "paid");
+    const li = h(`<li><button class="rec-row">
+      <span class="er-main"><span class="er-cat">${esc(c.name)}<span class="tag">カード</span></span><span class="er-memo">${next ? `次の引き落とし ${esc(shortDate(next.pay))}${next.state === "open" ? "（締め前）" : ""}` : ""}</span></span>
+      <span class="er-amt">${next ? yen(next.amount) : ""}</span></button></li>`);
+    li.querySelector("button").addEventListener("click", () => openCard(c.id));
+    ul.appendChild(li);
+  }
+  if (banks.length) {
+    const act = h(`<div class="actions"><button class="btn" data-act="move">お金を移す（ATM など）</button></div>`);
+    act.querySelector("button").addEventListener("click", () => openTransfer(null));
+    sec.appendChild(act);
+  }
+  view.appendChild(sec);
 }
 
 function renderBudgets(byCat) {
@@ -971,11 +1052,19 @@ function renderSettings() {
   for (const r of recs) {
     const li = h(`<li><button class="rec-row ${r.type}">
       <span class="rr-day">${r.day}日</span>
-      <span class="er-main"><span class="er-cat">${esc(catName(r.type, r.cat))}${r.shift === "before" ? '<span class="tag">休日は前</span>' : r.shift === "after" ? '<span class="tag">休日は後</span>' : ""}${r.variable ? '<span class="tag">額が変わる</span>' : ""}</span>${r.memo ? `<span class="er-memo">${esc(r.memo)}</span>` : ""}</span>
+      <span class="er-main"><span class="er-cat">${esc(catName(r.type, r.cat))}${r.shift === "before" ? '<span class="tag">休日は前</span>' : r.shift === "after" ? '<span class="tag">休日は後</span>' : ""}${r.variable ? '<span class="tag">額が変わる</span>' : ""}${r.acct ? `<span class="tag">${esc(acctName(r.acct))}</span>` : ""}</span>${r.memo ? `<span class="er-memo">${esc(r.memo)}</span>` : ""}</span>
       <span class="er-amt">${r.type === "income" ? "+" : ""}${yen(r.amount)}</span>
     </button></li>`);
     li.querySelector("button").addEventListener("click", () => openRecurring(r.id));
     rl.appendChild(li);
+  }
+  // 登録している固定費だけで毎月いくら残るか（額が変わるものは目安額）
+  if (recs.length) {
+    const ft = { income: 0, expense: 0 };
+    for (const r of recs) ft[r.type] += r.amount;
+    rl.after(fixedSum(ft, "固定費だけで毎月"));
+    const nv = recs.filter((r) => r.variable).length;
+    if (nv) rsec.querySelector(".fixed-sum").after(h(`<p class="hint">額が変わるもの ${nv} 件は目安額で数えています。</p>`));
   }
   rsec.querySelector("[data-act=add-rec]").addEventListener("click", () => openRecurring(null));
   view.appendChild(rsec);
@@ -1004,6 +1093,26 @@ function renderSettings() {
   }
   paintSum();
   view.appendChild(bsec);
+
+  // 口座・カード（仕様書 D36）
+  const asec = h(`<section class="card"><h2>口座・カード</h2>
+    <p class="hint">銀行口座の残高と、カードの引き落としを追えます。記録の「払い方」で口座やカードを選ぶと、その分が残高に入ります。残高は集計タブの上に出ます。</p>
+    <ul class="rec-list"></ul>
+    <div class="actions"><button class="btn" data-act="add-bank">＋ 銀行口座</button><button class="btn" data-act="add-card">＋ カード</button></div>
+  </section>`);
+  const al = asec.querySelector("ul");
+  const accts = [...activeAccts("bank"), ...activeAccts("card")];
+  if (!accts.length) al.appendChild(h(`<li class="muted">まだありません。</li>`));
+  for (const a of accts) {
+    const li = h(`<li><button class="rec-row">
+      <span class="er-main"><span class="er-cat">${esc(a.name)}${a.kind === "card" ? '<span class="tag">カード</span>' : ""}</span><span class="er-memo">${esc(a.kind === "card" ? cardRule(a) : `${shortDate(a.since)}の朝 ${signed(a.start).replace(/^\+/, "")}から`)}</span></span>
+    </button></li>`);
+    li.querySelector("button").addEventListener("click", () => openAccountForm(a.id, a.kind));
+    al.appendChild(li);
+  }
+  asec.querySelector("[data-act=add-bank]").addEventListener("click", () => openAccountForm(null, "bank"));
+  asec.querySelector("[data-act=add-card]").addEventListener("click", () => openAccountForm(null, "card"));
+  view.appendChild(asec);
 
   // ランキング
   const nsec = h(`<section class="card"><h2>ランキング</h2>
@@ -1062,6 +1171,7 @@ function openRecurring(id, init) {
         const first = Store.firstRecMonth(v, today());
         if (r) {
           Object.assign(r, v);
+          if (!v.acct) delete r.acct;
           if (r.next < first) r.next = first;
         } else {
           data.recurring.push({ id: "r" + Store.newId(), ...v, next: first });
@@ -1097,6 +1207,230 @@ function openRecurring(id, init) {
   openSheet(wrap);
 }
 
+// ---------- 口座・カード（仕様書 D36） ----------
+// 残高に使う金額。0 も、合わせたあとの − も入れられる
+function parseYen0(s) {
+  const t = String(s).replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/[,，\s円]/g, "").replace(/^[−ー－]/, "-");
+  if (!/^-?\d+$/.test(t)) return null;
+  const n = Number(t);
+  return Math.abs(n) <= 99999999 ? n : null;
+}
+const dayOpts = (n) => Array.from({ length: n }, (_, i) => `<option value="${i + 1}">${i + 1}日</option>`).join("");
+const yenOf = (n) => (n < 0 ? "−" : "") + yen(Math.abs(n));
+function cardRule(c) {
+  return `${c.close === 31 ? "月末" : c.close + "日"}締め・${c.payMonth === 1 ? "翌月" : "翌々月"}${c.payDay}日払い${c.bank ? `（${acctName(c.bank)}から）` : ""}`;
+}
+const fullDate = (s) => `${s.slice(0, 4) !== today().slice(0, 4) ? s.slice(0, 4) + "年" : ""}${dayLabel(s)}`;
+
+// 銀行口座・カードの登録と変更（id が null なら新しく足す）
+function openAccountForm(id, kind) {
+  const a = id ? findAcct(id) : null;
+  const isCard = kind === "card";
+  const banks = activeAccts("bank");
+  if (a && a.bank && findAcct(a.bank)?.deleted) banks.push(findAcct(a.bank));
+  const wrap = h(`<div><div class="sheet-head"><h2>${a ? "登録の変更" : isCard ? "カードを足す" : "銀行口座を足す"}</h2><button class="icon-btn" aria-label="閉じる">✕</button></div>
+    <form class="entry" novalidate>
+      <label class="field"><span>名前</span><input name="name" maxlength="20" autocomplete="off" placeholder="${isCard ? "例：○○カード" : "例：○○銀行"}"></label>
+      ${isCard ? `<div class="row2">
+        <label class="field grow"><span>締め日</span><select name="close">${dayOpts(30)}<option value="31">月末</option></select></label>
+        <label class="field grow"><span>引き落とし</span><select name="payMonth"><option value="1">翌月</option><option value="2">翌々月</option></select></label>
+        <label class="field grow"><span>引き落とし日</span><select name="payDay">${dayOpts(31)}</select></label>
+      </div>
+      <label class="field"><span>引き落とし口座</span><select name="bank"><option value="">登録していない口座</option>${banks.map((b) => `<option value="${esc(b.id)}">${esc(acctName(b.id))}</option>`).join("")}</select></label>
+      <p class="hint">引き落とし日が休日なら、次の平日に引かれるものとして数えます。29〜31日はその日が無い月は月末です。</p>
+      <p class="hint">カードで払った記録は使った日に支出として数えます。<b>カードの引き落としを支出や固定費として入れないでください</b>（二重に数えます）。</p>`
+      : `<div class="row2">
+        <label class="field grow"><span>残高（円）</span><input name="start" inputmode="numeric" autocomplete="off" placeholder="0"></label>
+        <label class="field grow"><span>いつの残高か</span><input name="since" type="date"></label>
+      </div>
+      <p class="hint">その日の朝（その日の出入りの前）の残高を入れます。その日からあとの、この口座を選んだ記録・お金の移動・カードの引き落としを足し引きします。ずれたときは、残高の画面で実際の額に合わせられます。</p>`}
+      <div class="actions">${a ? '<button type="button" class="btn danger" data-act="delete">削除</button>' : ""}<button type="submit" class="btn primary">${a ? "保存" : "登録する"}</button></div>
+    </form></div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  const f = wrap.querySelector("form");
+  const el = (n) => f.querySelector(`[name=${n}]`);
+  el("name").value = a ? a.name : "";
+  if (isCard) {
+    el("close").value = String(a ? a.close : 31);
+    el("payMonth").value = String(a ? a.payMonth : 1);
+    el("payDay").value = String(a ? a.payDay : 27);
+    el("bank").value = a ? a.bank : banks[0]?.id || "";
+  } else {
+    el("start").value = a ? a.start.toLocaleString("ja-JP") : "";
+    el("since").value = a ? a.since : today();
+  }
+  f.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const name = el("name").value.trim();
+    if (!name) return toast("名前を入れてください");
+    const v = { name };
+    if (isCard) {
+      Object.assign(v, { close: Number(el("close").value), payMonth: Number(el("payMonth").value), payDay: Number(el("payDay").value), bank: el("bank").value });
+    } else {
+      const n = el("start").value.trim() ? parseYen0(el("start").value) : 0;
+      if (n == null) return toast("残高を数字で入れてください");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(el("since").value)) return toast("いつの残高かを入れてください");
+      Object.assign(v, { start: n, since: el("since").value });
+    }
+    if (a) Object.assign(a, v);
+    else data.accounts.push({ id: (isCard ? "k" : "b") + Store.newId(), kind, ...v });
+    save(); closeSheet(); render();
+    toast(a ? "変えました" : `「${name}」を登録しました`);
+  });
+  if (a) f.querySelector("[data-act=delete]").addEventListener("click", () => {
+    if (!confirm(`「${a.name}」を削除しますか？\nこの${isCard ? "カード" : "口座"}を選んだ記録は残ります。`)) return;
+    a.deleted = true;
+    save(); closeSheet(); render();
+    toast("削除しました");
+  });
+  openSheet(wrap);
+}
+
+// 銀行口座の残高と出入り
+function openBank(id) {
+  const b = findAcct(id);
+  if (!b) return;
+  const t = today();
+  let bal = b.start;
+  const rows = Accounts.moves(data, b, t).map((m) => ({ ...m, after: (bal += m.amount) })).reverse();
+  const now = bal;
+  const wrap = h(`<div><div class="sheet-head"><h2>${esc(b.name)}</h2><button class="icon-btn" aria-label="閉じる">✕</button></div>
+    <p class="big-bal"><span>今日の残高</span><b class="${now < 0 ? "neg" : ""}">${yenOf(now)}</b></p>
+    <form class="align"><label class="yen-input"><input inputmode="numeric" placeholder="実際の残高" aria-label="実際の残高"><span>円</span></label><button class="btn">実際の残高に合わせる</button></form>
+  </div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  wrap.querySelector(".align").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const n = parseYen0(ev.target.querySelector("input").value);
+    if (n == null) return toast("残高を数字で入れてください");
+    b.start += n - now; // 出入りはそのままにして、もとの残高のほうを直す
+    save(); render(); openBank(id);
+    toast("実際の残高に合わせました");
+  });
+  const up = Accounts.upcoming(data, b, t);
+  if (up.length) {
+    const sec = h(`<section><h3 class="sub-h">これからのカードの引き落とし</h3><ul class="move-list"></ul></section>`);
+    let rest = now;
+    for (const { card, bill } of up) {
+      rest -= bill.amount;
+      sec.querySelector("ul").appendChild(h(`<li><span class="mv-date">${esc(fullDate(bill.pay))}</span>
+        <span class="mv-main">${esc(card.name)}${bill.state === "open" ? '<span class="tag">締め前・まだ増えます</span>' : ""}</span>
+        <span class="mv-amt">−${yen(bill.amount)}</span><span class="mv-after">残り ${yenOf(rest)}</span></li>`));
+    }
+    wrap.appendChild(sec);
+  }
+  const hist = h(`<section><h3 class="sub-h">出入り（新しい順）</h3><ul class="move-list"></ul></section>`);
+  const ul = hist.querySelector("ul");
+  if (!rows.length) ul.appendChild(h(`<li class="muted">${esc(fullDate(b.since))}から、まだ出入りはありません。</li>`));
+  for (const m of rows.slice(0, 50)) {
+    const label = m.kind === "entry" ? catName(m.ref.type, m.ref.cat) + (m.ref.memo ? "・" + m.ref.memo : "")
+      : m.kind === "transfer" ? `${acctName(m.amount > 0 ? m.ref.from : m.ref.to)}${m.amount > 0 ? "から" : "へ"}移した${m.ref.memo ? "・" + m.ref.memo : ""}`
+      : `${m.ref.name}の引き落とし`;
+    const li = h(`<li><button class="move-row"><span class="mv-date">${esc(fullDate(m.date))}</span><span class="mv-main">${esc(label)}</span>
+      <span class="mv-amt${m.amount > 0 ? " inc" : ""}">${signed(m.amount)}</span><span class="mv-after">${yenOf(m.after)}</span></button></li>`);
+    li.querySelector("button").addEventListener("click", () => {
+      if (m.kind === "entry") openEdit(m.ref.id);
+      else if (m.kind === "transfer") openTransfer(m.ref.id);
+      else openCard(m.ref.id);
+    });
+    ul.appendChild(li);
+  }
+  if (rows.length > 50) hist.appendChild(h(`<p class="hint">新しいほうから50件だけ出しています。</p>`));
+  wrap.appendChild(hist);
+  const act = h(`<div class="actions"><button class="btn" data-act="edit">登録を変える</button><button class="btn primary" data-act="move">お金を移す</button></div>`);
+  act.querySelector("[data-act=edit]").addEventListener("click", () => openAccountForm(id, "bank"));
+  act.querySelector("[data-act=move]").addEventListener("click", () => openTransfer(null, { from: id }));
+  wrap.appendChild(act);
+  openSheet(wrap);
+}
+
+// カードの引き落としの一覧。明細と違えば額を直せる（空にすると記録の合計に戻る）
+function openCard(id) {
+  const c = findAcct(id);
+  if (!c) return;
+  const STATE = { open: "締め前", closed: "引き落とし前", paid: "引き落とし済み" };
+  const wrap = h(`<div><div class="sheet-head"><h2>${esc(c.name)}</h2><button class="icon-btn" aria-label="閉じる">✕</button></div>
+    <p class="hint">${esc(cardRule(c))}。このカードを選んだ記録を締め日で区切って合計しています。明細の額と違うときは、額を直せます（空にすると記録の合計に戻ります）。</p>
+    <ul class="bill-list"></ul>
+    <p class="hint">カードの引き落としを支出や固定費として入れないでください（使った日に支出として数えているので、二重になります）。</p>
+    <div class="actions"><button class="btn" data-act="edit">登録を変える</button></div></div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  const ul = wrap.querySelector("ul");
+  for (const bl of Accounts.bills(data, c, today()).reverse().slice(0, 12)) {
+    const key = `${c.id}:${bl.key}`;
+    const li = h(`<li class="bill ${bl.state}">
+      <div class="bl-top"><span>${esc(fullDate(bl.pay))}<span class="tag">${STATE[bl.state]}</span></span>
+        <label class="yen-input"><input inputmode="numeric" placeholder="${bl.auto.toLocaleString("ja-JP")}" value="${bl.fixed != null ? bl.fixed.toLocaleString("ja-JP") : ""}" aria-label="引き落とし額"><span>円</span></label></div>
+      <div class="bl-sub">${esc(shortDate(bl.from))}〜${esc(shortDate(bl.to))}に使った分　記録の合計 ${yen(bl.auto)}${bl.fixed != null ? "（額を直しています）" : ""}</div>
+    </li>`);
+    const input = li.querySelector("input");
+    input.addEventListener("change", () => {
+      if (!input.value.trim()) delete data.bills[key];
+      else {
+        const n = parseYen0(input.value);
+        if (n == null || n < 0) { input.value = bl.fixed != null ? bl.fixed.toLocaleString("ja-JP") : ""; return toast("金額を数字で入れてください"); }
+        data.bills[key] = n;
+      }
+      save(); render(); openCard(id);
+    });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") input.blur(); });
+    ul.appendChild(li);
+  }
+  wrap.querySelector("[data-act=edit]").addEventListener("click", () => openAccountForm(id, "card"));
+  openSheet(wrap);
+}
+
+// お金の移動（ATM で引き出す・口座のあいだで移す）。支出・収入には数えない
+function openTransfer(id, init) {
+  const tr = id ? data.transfers.find((x) => x.id === id) : null;
+  const banks = activeAccts("bank");
+  const st = tr ? { ...tr } : { date: today(), amount: null, from: banks[0]?.id || Accounts.CASH, to: Accounts.CASH, memo: "", ...(init || {}) };
+  const opts = (cur) => {
+    const list = banks.slice();
+    if (findAcct(cur)?.deleted) list.push(findAcct(cur));
+    return `<option value="${Accounts.CASH}">現金</option>` + list.map((b) => `<option value="${esc(b.id)}">${esc(acctName(b.id))}</option>`).join("");
+  };
+  const wrap = h(`<div><div class="sheet-head"><h2>${tr ? "お金の移動の修正" : "お金を移す"}</h2><button class="icon-btn" aria-label="閉じる">✕</button></div>
+    <form class="entry" novalidate>
+      <label class="amount"><input name="amount" inputmode="numeric" autocomplete="off" placeholder="0" aria-label="金額"><span>円</span></label>
+      <div class="row2">
+        <label class="field grow"><span>どこから</span><select name="from">${opts(st.from)}</select></label>
+        <label class="field grow"><span>どこへ</span><select name="to">${opts(st.to)}</select></label>
+      </div>
+      <div class="row2">
+        <label class="field"><span>日付</span><input name="date" type="date"></label>
+        <label class="field grow"><span>メモ</span><input name="memo" maxlength="100" autocomplete="off" placeholder="任意"></label>
+      </div>
+      <p class="hint">ATM で引き出したときは「銀行 → 現金」。支出・収入には数えず、口座の残高だけが変わります。</p>
+      <div class="actions">${tr ? '<button type="button" class="btn danger" data-act="delete">削除</button>' : ""}<button type="submit" class="btn primary">${tr ? "保存" : "記録する"}</button></div>
+    </form></div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  const f = wrap.querySelector("form");
+  const el = (n) => f.querySelector(`[name=${n}]`);
+  el("amount").value = st.amount ? st.amount.toLocaleString("ja-JP") : "";
+  el("from").value = st.from; el("to").value = st.to; el("date").value = st.date; el("memo").value = st.memo || "";
+  el("amount").addEventListener("input", () => { const n = parseAmount(el("amount").value); if (n != null) el("amount").value = n.toLocaleString("ja-JP"); });
+  f.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const amount = parseAmount(el("amount").value);
+    if (amount == null) return toast("金額を 1〜99,999,999 の数字で入れてください");
+    if (el("from").value === el("to").value) return toast("「どこから」と「どこへ」を別にしてください");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(el("date").value)) return toast("日付を入れてください");
+    const v = { date: el("date").value, amount, from: el("from").value, to: el("to").value, memo: el("memo").value.trim() };
+    if (tr) Object.assign(tr, v);
+    else data.transfers.push({ id: "t" + Store.newId(), ...v, createdAt: new Date().toISOString() });
+    save(); closeSheet(); render();
+    toast(`${acctName(v.from)}から${acctName(v.to)}へ ${yen(amount)}を移しました`);
+  });
+  if (tr) f.querySelector("[data-act=delete]").addEventListener("click", () => {
+    if (!confirm(`${dayLabel(tr.date)} ${acctName(tr.from)}→${acctName(tr.to)} ${yen(tr.amount)} を削除しますか？`)) return;
+    data.transfers.splice(data.transfers.indexOf(tr), 1);
+    save(); closeSheet(); render();
+    toast("削除しました");
+  });
+  openSheet(wrap);
+}
+
 // よく使う記録のボタンの名前：メモがあればメモ、無ければ分類名
 function presetName(p) {
   return p.memo || catName(p.type, p.cat);
@@ -1112,7 +1446,7 @@ function openPreset(id, init) {
     preset: true,
     saveLabel: p ? "保存" : "登録する",
     onSave: (v) => {
-      if (p) Object.assign(p, v);
+      if (p) { Object.assign(p, v); if (!v.acct) delete p.acct; }
       else data.presets.push({ id: "p" + Store.newId(), ...v });
       save(); closeSheet(); render();
       toast(p ? "変えました" : `「${presetName(v)}」を登録しました`);
