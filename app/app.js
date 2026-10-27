@@ -58,6 +58,8 @@ function acctName(id) {
   if (!a) return "（不明な口座）";
   return a.deleted ? `${a.name}（削除済み）` : a.name;
 }
+// 支出の額。0円のときは「−」を付けない
+const minus = (n) => (n ? "−" : "") + yen(n);
 const signed = (n) => (n > 0 ? "+" : n < 0 ? "−" : "") + yen(Math.abs(n));
 // 払い方・入る先の選択肢（支出はカードも、収入は銀行だけ）。cur が削除済みでもその1つは出す
 function acctOptions(type, cur) {
@@ -350,7 +352,7 @@ function renderInput() {
   for (const p of data.presets) {
     const c = findCat(p.type, p.cat);
     if (!c || c.deleted) continue; // 分類を消したものは、設定で直すまで出さない
-    const b = h(`<button type="button" class="preset ${p.type}"><span class="pr-name">${esc(presetName(p))}</span><span class="pr-amt">${p.amount ? (p.type === "income" ? "+" : "") + yen(p.amount) : "金額を入れる"}</span></button>`);
+    const b = h(`<button type="button" class="preset ${p.type}"><span class="pr-name">${esc(presetName(p))}</span><span class="pr-amt">${p.amount ? (p.type === "income" ? "+" : "−") + yen(p.amount) : "金額を入れる"}</span></button>`);
     b.addEventListener("click", () => {
       if (!p.amount) {
         form.fill(p);
@@ -401,7 +403,7 @@ function byNewest(a, b) {
 }
 
 function entryRow(e, withDate) {
-  const sign = e.type === "income" ? "+" : "";
+  const sign = e.type === "income" ? "+" : "−";
   const row = h(`<button class="entry-row ${e.type}">
     <span class="dot" style="${e.type === "expense" ? `background:${expenseColor(e.cat)}` : "visibility:hidden"}"></span>
     <span class="er-main"><span class="er-cat">${esc(catName(e.type, e.cat))}${e.check ? '<span class="tag warn">要確認</span>' : e.rec ? '<span class="tag">固定費</span>' : ""}${e.acct ? `<span class="tag">${esc(acctName(e.acct))}</span>` : ""}</span>${e.memo ? `<span class="er-memo">${esc(e.memo)}</span>` : ""}</span>
@@ -484,7 +486,7 @@ function totalsRow(t) {
   const diff = t.income - t.expense;
   return h(`<div class="totals">
     <div><span>収入</span><b class="inc">${yen(t.income)}</b></div>
-    <div><span>支出</span><b>${yen(t.expense)}</b></div>
+    <div><span>支出</span><b class="${t.expense ? "neg" : ""}">${minus(t.expense)}</b></div>
     <div><span>差額</span><b class="${diff < 0 ? "neg" : ""}">${diff >= 0 ? "+" : "−"}${yen(Math.abs(diff))}</b></div>
   </div>`);
 }
@@ -529,7 +531,7 @@ function paintList(body) {
     if (e.date !== day) {
       day = e.date;
       const t = totals(list.filter((x) => x.date === day));
-      group = h(`<section class="day"><h3><span>${dayLabel(day)}</span><span class="muted">${t.expense ? "支出 " + yen(t.expense) : ""}${t.income ? "　収入 " + yen(t.income) : ""}</span></h3></section>`);
+      group = h(`<section class="day"><h3><span>${dayLabel(day)}</span><span class="muted">${t.expense ? `支出 <span class="neg">${minus(t.expense)}</span>` : ""}${t.income ? "　収入 " + yen(t.income) : ""}</span></h3></section>`);
       body.appendChild(group);
     }
     group.appendChild(entryRow(e, false));
@@ -601,7 +603,7 @@ function renderSummary() {
 function fixedSum(t, title) {
   const diff = t.income - t.expense;
   return h(`<div class="fixed-sum"><span class="fs-title">${esc(title)}</span>
-    <span>収入 <b class="inc">${yen(t.income)}</b></span><span>支出 <b>${yen(t.expense)}</b></span><span>差 <b class="${diff < 0 ? "neg" : ""}">${diff >= 0 ? "+" : "−"}${yen(Math.abs(diff))}</b></span></div>`);
+    <span>収入 <b class="inc">${yen(t.income)}</b></span><span>支出 <b class="${t.expense ? "neg" : ""}">${minus(t.expense)}</b></span><span>差 <b class="${diff < 0 ? "neg" : ""}">${diff >= 0 ? "+" : "−"}${yen(Math.abs(diff))}</b></span></div>`);
 }
 
 // 口座の残高（仕様書 D36）。口座もカードも登録していなければ出さない
@@ -1029,7 +1031,7 @@ function renderSettings() {
   data.presets.forEach((p, i) => {
     const li = h(`<li><button class="rec-row ${p.type}">
       <span class="er-main"><span class="er-cat">${esc(presetName(p))}</span>${p.memo ? `<span class="er-memo">${esc(catName(p.type, p.cat))}</span>` : ""}</span>
-      <span class="er-amt">${p.amount ? (p.type === "income" ? "+" : "") + yen(p.amount) : '<span class="muted">金額はそのつど</span>'}</span>
+      <span class="er-amt">${p.amount ? (p.type === "income" ? "+" : "−") + yen(p.amount) : '<span class="muted">金額はそのつど</span>'}</span>
     </button>
     <button class="icon-btn" data-m="-1" aria-label="上へ" ${i === 0 ? "disabled" : ""}>↑</button>
     <button class="icon-btn" data-m="1" aria-label="下へ" ${i === data.presets.length - 1 ? "disabled" : ""}>↓</button></li>`);
@@ -1053,7 +1055,7 @@ function renderSettings() {
     const li = h(`<li><button class="rec-row ${r.type}">
       <span class="rr-day">${r.day}日</span>
       <span class="er-main"><span class="er-cat">${esc(catName(r.type, r.cat))}${r.shift === "before" ? '<span class="tag">休日は前</span>' : r.shift === "after" ? '<span class="tag">休日は後</span>' : ""}${r.variable ? '<span class="tag">額が変わる</span>' : ""}${r.acct ? `<span class="tag">${esc(acctName(r.acct))}</span>` : ""}</span>${r.memo ? `<span class="er-memo">${esc(r.memo)}</span>` : ""}</span>
-      <span class="er-amt">${r.type === "income" ? "+" : ""}${yen(r.amount)}</span>
+      <span class="er-amt">${r.type === "income" ? "+" : "−"}${yen(r.amount)}</span>
     </button></li>`);
     li.querySelector("button").addEventListener("click", () => openRecurring(r.id));
     rl.appendChild(li);

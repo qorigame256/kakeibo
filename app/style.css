@@ -151,6 +151,7 @@ main {
 .er-date { font-size: 12px; color: var(--muted); flex: none; }
 .er-amt { font-weight: 600; font-variant-numeric: tabular-nums; flex: none; }
 .entry-row.income .er-amt { color: var(--income); }
+.entry-row.expense .er-amt { color: var(--over); }
 
 .month-nav { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; position: relative; }
 .month-nav span { font-size: 17px; font-weight: 700; min-width: 120px; text-align: center; }
@@ -166,6 +167,7 @@ main {
 .day { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 4px 12px; margin-bottom: 10px; }
 .day h3 { display: flex; justify-content: space-between; font-size: 14px; margin: 6px 0; }
 .day h3 .muted { font-weight: 400; font-size: 13px; }
+.day h3 .neg { color: var(--over); }
 
 /* 予算 */
 .budget { padding: 8px 0; border-top: 1px solid var(--line); }
@@ -259,6 +261,7 @@ main {
 .rec-row { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: none; padding: 9px 2px; text-align: left; }
 .rr-day { width: 2.6em; flex: none; color: var(--text2); font-variant-numeric: tabular-nums; }
 .rec-row.income .er-amt { color: var(--income); }
+.rec-row.expense .er-amt { color: var(--over); }
 .search { display: flex; align-items: center; gap: 6px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 0 10px; margin-bottom: 12px; color: var(--muted); }
 .search input { flex: 1; min-width: 0; border: 0; background: none; padding: 9px 0; font-size: 16px; outline: none; }
 
@@ -327,6 +330,7 @@ main {
 .pr-name { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
 .pr-amt { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .preset.income .pr-amt { color: var(--income); }
+.preset.expense .pr-amt { color: var(--over); }
 .preset.add { justify-content: center; color: var(--accent); border-style: dashed; min-height: 48px; }
 .preset-list { list-style: none; margin: 0; padding: 0; }
 .preset-list li { display: flex; align-items: center; gap: 2px; border-top: 1px solid var(--line); }
