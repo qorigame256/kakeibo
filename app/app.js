@@ -15,6 +15,8 @@ let month = today().slice(0, 7); // 一覧と集計で共有する「表示し�
 let draft = { type: "expense", date: today(), cat: null }; // 入力タブの続き
 let catType = "expense"; // 設定の分類の切り替え
 let query = ""; // 一覧の検索欄
+let listView = "list"; // 一覧の「リスト／カレンダー」（仕様書 D40）
+let calDay = null; // カレンダーで選んでいる日
 let sumMode = "month"; // 集計の「月／年」
 let year = month.slice(0, 4); // 集計の「年」で表示している年
 let rankMetric = "streak"; // ランキングで見ている指標
@@ -73,6 +75,47 @@ function parseAmount(s) {
   if (!/^\d+$/.test(t)) return null;
   const n = Number(t);
   return n >= 1 && n <= 99999999 ? n : null;
+}
+// 金額欄の電卓（仕様書 D42）。「1,200+350」のような足し引きの式を計算する。最後に残った「+」「−」は打ちかけとして無視する
+function normExpr(s) {
+  return String(s).replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/[＋]/g, "+").replace(/[−－ー‐]/g, "-").replace(/[,，\s円]/g, "");
+}
+function evalAmount(s) {
+  const t = normExpr(s).replace(/[+-]$/, "");
+  if (!/^\d+([+-]\d+)*$/.test(t)) return null;
+  const n = t.match(/[+-]?\d+/g).reduce((sum, x) => sum + Number(x), 0);
+  return n >= 1 && n <= 99999999 ? n : null;
+}
+const hasOp = (s) => /\d[+-]/.test(normExpr(s));
+// 金額欄に「＋」「−」のボタンと計算の結果を付ける。iPhone の数字のキーボードには + が無いため
+function calcField(amount) {
+  const label = amount.closest(".amount");
+  const row = h(`<div class="calc"><span class="calc-out" aria-live="polite"></span><button type="button" class="calc-op" data-op="+" aria-label="足す">＋</button><button type="button" class="calc-op" data-op="-" aria-label="引く">−</button></div>`);
+  label.after(row);
+  const out = row.querySelector(".calc-out");
+  // 打ちながら数ごとに 3 桁のカンマを付け、式なら右に「= 合計」を出す
+  const paint = () => {
+    const t = normExpr(amount.value);
+    if (/^[\d+-]*$/.test(t)) amount.value = t.replace(/\d+/g, (d) => Number(d).toLocaleString("ja-JP")).replace(/-/g, "−");
+    const n = evalAmount(amount.value);
+    out.textContent = hasOp(amount.value) ? (n != null ? `= ${yen(n)}` : "計算できません") : "";
+    out.classList.toggle("bad", hasOp(amount.value) && n == null);
+  };
+  amount.addEventListener("input", paint);
+  row.querySelectorAll(".calc-op").forEach((b) => {
+    // 押してもキーボードが閉じないよう、入力欄から焦点を外さない
+    b.addEventListener("pointerdown", (e) => e.preventDefault());
+    b.addEventListener("click", () => {
+      const t = normExpr(amount.value);
+      if (!t) return amount.focus();
+      amount.value = t.replace(/[+-]$/, "") + b.dataset.op; // 続けて押したら記号を置き換える
+      paint();
+      amount.focus();
+      amount.setSelectionRange(amount.value.length, amount.value.length);
+    });
+  });
+  amount.paintCalc = paint;
 }
 // 失敗はすぐ後の「◯◯しました」の案内に上書きされないよう、閉じるまで残る alert で知らせる
 const saveFailed = () => alert("保存できませんでした。端末の空きを確認してください。\n（いまの変更は、アプリを閉じると消えます）");
@@ -254,14 +297,10 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring, preset }) {
       paint();
     });
   });
-  // 打ちながら 3 桁ごとのカンマを付ける
-  amount.addEventListener("input", () => {
-    const n = parseAmount(amount.value);
-    if (n != null) amount.value = n.toLocaleString("ja-JP");
-  });
+  calcField(amount);
   box.addEventListener("submit", (ev) => {
     ev.preventDefault();
-    const n = preset && !amount.value.trim() ? null : parseAmount(amount.value);
+    const n = preset && !amount.value.trim() ? null : evalAmount(amount.value);
     if (n == null && !(preset && !amount.value.trim())) { toast("金額を 1〜99,999,999 の数字で入れてください"); amount.focus(); return; }
     if (!st.cat) { toast("分類を選んでください"); return; }
     const v = { type: st.type, cat: st.cat, amount: n, memo: memo.value.trim() };
@@ -276,7 +315,7 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring, preset }) {
     }
     const ok = onSave(v);
     if (ok) {
-      amount.value = ""; memo.value = ""; st.cat = null;
+      amount.value = ""; amount.paintCalc(); memo.value = ""; st.cat = null;
       memos = memoIndex(); // いま入れたメモも次から候補に出す
       paint();
     }
@@ -287,11 +326,11 @@ function entryForm(init, { onSave, onDelete, saveLabel, recurring, preset }) {
     if (v.type !== st.type && init.onTypeChange) init.onTypeChange(v.type);
     st.type = v.type; st.cat = v.cat;
     if (v.acct !== undefined) { st.acct = v.acct; if (init.onAcctChange) init.onAcctChange(st.acct); }
-    if (v.amount) amount.value = v.amount.toLocaleString("ja-JP");
+    if (v.amount) { amount.value = v.amount.toLocaleString("ja-JP"); amount.paintCalc(); }
     memo.value = v.memo || "";
     paint();
   };
-  box.peek = () => ({ type: st.type, cat: st.cat, amount: parseAmount(amount.value), memo: memo.value.trim(), acct: st.acct || "" });
+  box.peek = () => ({ type: st.type, cat: st.cat, amount: evalAmount(amount.value), memo: memo.value.trim(), acct: st.acct || "" });
   box.refreshMemos = () => { memos = memoIndex(); paintSugg(); };
   paint();
   return box;
@@ -521,11 +560,18 @@ function paintList(body) {
     body.appendChild(box);
     return;
   }
+  const seg = h(`<div class="seg2 small"><button type="button" data-v="list">リスト</button><button type="button" data-v="cal">カレンダー</button></div>`);
+  seg.querySelectorAll("button").forEach((b) => {
+    b.classList.toggle("on", b.dataset.v === listView);
+    b.addEventListener("click", () => { if (listView !== b.dataset.v) { listView = b.dataset.v; paintList(body); } });
+  });
+  body.appendChild(seg);
   body.appendChild(monthNav());
   const list = monthEntries(month).sort(byNewest);
   body.appendChild(totalsRow(totals(list)));
   const pending = list.filter((e) => e.check).length;
   if (pending) body.appendChild(h(`<p class="notice">「要確認」の固定費が ${pending} 件あります。押して実際の額に直してください。</p>`));
+  if (listView === "cal") return paintCalendar(body, list);
   if (!list.length) {
     body.appendChild(h(`<p class="empty">${monthTitle(month)}の記録はありません。</p>`));
     return;
@@ -540,6 +586,42 @@ function paintList(body) {
     }
     group.appendChild(entryRow(e, false));
   }
+}
+
+// カレンダー（仕様書 D40）：各日に支出の合計、収入のある日は青い点。押した日の記録を下に並べる
+function paintCalendar(body, list) {
+  if (!calDay || !calDay.startsWith(month)) calDay = today().startsWith(month) ? today() : null;
+  const [y, m] = month.split("-").map(Number);
+  const byDay = {};
+  for (const e of list) (byDay[e.date] ||= { expense: 0, income: 0 })[e.type] += e.amount;
+  // 狭い枠に収まるよう、10万円からは「12万」のように縮める
+  const short = (v) => (v >= 100000 ? Math.round(v / 10000) + "万" : v.toLocaleString("ja-JP"));
+  const cal = h(`<div class="cal"></div>`);
+  WEEK.forEach((w, i) => cal.appendChild(h(`<span class="cal-w${i === 0 ? " sun" : i === 6 ? " sat" : ""}">${w}</span>`)));
+  for (let i = new Date(y, m - 1, 1).getDay(); i > 0; i--) cal.appendChild(h(`<span></span>`));
+  for (let d = 1, n = new Date(y, m, 0).getDate(); d <= n; d++) {
+    const key = `${month}-${String(d).padStart(2, "0")}`;
+    const w = new Date(y, m - 1, d).getDay();
+    // 赤は日曜と祝日（Store.isHoliday は土曜と 12/31〜1/3 も休日に数えるので、それは外す）
+    const red = w === 0 || (w !== 6 && Store.isHoliday(key) && !(m === 12 && d === 31) && !(m === 1 && (d === 2 || d === 3)));
+    const t = byDay[key];
+    const b = h(`<button type="button" class="cal-d${red ? " sun" : w === 6 ? " sat" : ""}${key === today() ? " today" : ""}${key === calDay ? " on" : ""}" aria-label="${dayLabel(key)}${t?.expense ? " 支出" + yen(t.expense) : ""}${t?.income ? " 収入" + yen(t.income) : ""}">
+      <span class="cal-n">${d}</span><span class="cal-x">${t?.expense ? short(t.expense) : ""}</span>${t?.income ? '<i class="cal-inc"></i>' : ""}</button>`);
+    b.addEventListener("click", () => { calDay = key; paintList(body); });
+    cal.appendChild(b);
+  }
+  body.appendChild(cal);
+  if (!calDay) return body.appendChild(h(`<p class="hint">日を押すと、その日の記録が下に出ます。</p>`));
+  const dayList = list.filter((e) => e.date === calDay);
+  const t = totals(dayList);
+  const group = h(`<section class="day"><h3><span>${dayLabel(calDay)}</span><span class="muted">${t.expense ? `支出 <span class="neg">${minus(t.expense)}</span>` : ""}${t.income ? "　収入 " + yen(t.income) : ""}</span></h3></section>`);
+  for (const e of dayList) group.appendChild(entryRow(e, false));
+  if (!dayList.length) group.appendChild(h(`<p class="muted cal-none">この日の記録はありません。</p>`));
+  // その日の日付で入力タブを開く
+  const add = h(`<button type="button" class="link cal-add">＋ この日に記録する</button>`);
+  add.addEventListener("click", () => { draft.date = calDay; tab = "input"; render(); window.scrollTo(0, 0); });
+  group.appendChild(add);
+  body.appendChild(group);
 }
 
 // ---------- 集計タブ ----------
@@ -579,13 +661,18 @@ function renderSummary() {
   // 固定費から入った記録だけの収入・支出・差（固定費を登録していないときは出さない）
   const fixed = list.filter((e) => e.rec);
   if (fixed.length || data.recurring.length) view.appendChild(fixedSum(totals(fixed), `${isYear ? "この年" : "この月"}のうち固定費`));
+  if (!isYear) renderGoal();
 
   // 分類ごとの支出
   const byCat = new Map();
   for (const e of list) if (e.type === "expense") byCat.set(e.cat, (byCat.get(e.cat) || 0) + e.amount);
 
   if (!isYear) renderBudgets(byCat);
-  renderBreakdown(list, t, byCat, isYear ? "この年" : "この月");
+  // 先月（年なら前の年）の分類ごとの支出（仕様書 D41）
+  const prevByCat = new Map();
+  const prev = isYear ? data.entries.filter((e) => e.date.startsWith(`${Number(year) - 1}-`)) : monthEntries(shiftMonth(month, -1));
+  for (const e of prev) if (e.type === "expense") prevByCat.set(e.cat, (prevByCat.get(e.cat) || 0) + e.amount);
+  renderBreakdown(list, t, byCat, isYear ? "この年" : "この月", prevByCat, isYear ? "前の年" : "先月");
 
   // 推移の棒グラフ：月は選んでいる月までの12か月、年は1月〜12月
   const months = [];
@@ -601,6 +688,91 @@ function renderSummary() {
     <div class="bars-wrap"></div><p class="readout"></p></section>`);
   view.appendChild(msec);
   Charts.bars(msec.querySelector(".bars-wrap"), msec.querySelector(".readout"), months, selected, msec.querySelector("h2").textContent);
+}
+
+// ---------- 貯金の目標（仕様書 D39） ----------
+// たまった額＝数え始める日から今日までの「収入−支出」。先の日付の記録は、その日が来るまで数えない
+function goalSaved(g) {
+  const t = totals(data.entries.filter((e) => e.date >= g.since && e.date <= today()));
+  return t.income - t.expense;
+}
+// 今年でなければ年も付ける
+const dateText = (s) => (s.slice(0, 4) !== today().slice(0, 4) ? s.slice(0, 4) + "年" : "") + shortDate(s);
+function renderGoal() {
+  const g = data.goal;
+  if (!g) {
+    const sec = h(`<section class="card goal-empty"><button type="button" class="link">＋ 貯金の目標を決める</button>
+      <p class="hint">「旅行のために3月までに10万円」のように決めると、たまった額と、毎月いくら残せばよいかを出します。</p></section>`);
+    sec.querySelector("button").addEventListener("click", () => openGoal());
+    view.appendChild(sec);
+    return;
+  }
+  const t = today();
+  const saved = goalSaved(g);
+  const rest = g.amount - saved;
+  const done = rest <= 0;
+  const pct = Math.max(0, Math.min(100, (saved / g.amount) * 100));
+  let plan = "";
+  if (done) plan = `<div class="g-plan ok">目標を達成しました！</div>`;
+  else if (g.due && g.due < t) plan = `<div class="g-plan warn">期日（${esc(dateText(g.due))}）を過ぎました</div>`;
+  else if (g.due) {
+    // 今月を入れて期日の月まで何か月あるか
+    const months = (Number(g.due.slice(0, 4)) - Number(t.slice(0, 4))) * 12 + Number(g.due.slice(5, 7)) - Number(t.slice(5, 7)) + 1;
+    plan = months <= 1
+      ? `<div class="g-plan">期日（${esc(dateText(g.due))}）まで、今月中にあと <b>${yen(rest)}</b></div>`
+      : `<div class="g-plan">期日（${esc(dateText(g.due))}）まで 毎月 <b>${yen(Math.ceil(rest / months))}</b>（今月を入れてあと${months}か月）</div>`;
+  }
+  const sec = h(`<button type="button" class="card goal${done ? " done" : ""}">
+    <div class="b-top"><span class="g-name">${esc(g.name)}</span><span class="b-num">${saved < 0 ? "−" : ""}${yen(Math.abs(saved))} / ${yen(g.amount)}</span></div>
+    <div class="b-bar"><i style="width:${pct}%"></i></div>
+    <div class="b-rest">${done ? `目標より ${yen(-rest)} 多くたまっています` : `あと ${yen(rest)}（${Math.floor(pct)}%）`}</div>
+    ${plan}
+    <div class="g-note">${esc(dateText(g.since))}からの収入−支出で数えています</div>
+  </button>`);
+  sec.addEventListener("click", () => openGoal());
+  view.appendChild(sec);
+}
+function openGoal() {
+  const g = data.goal;
+  const wrap = h(`<div><div class="sheet-head"><h2>${g ? "貯金の目標" : "貯金の目標を決める"}</h2><button class="icon-btn" aria-label="閉じる">✕</button></div>
+    <form class="entry" novalidate>
+      <label class="field"><span>名前</span><input name="name" maxlength="20" autocomplete="off" placeholder="例：沖縄旅行"></label>
+      <label class="amount"><input name="amount" inputmode="numeric" autocomplete="off" placeholder="目標額" aria-label="目標額"><span>円</span></label>
+      <div class="row2">
+        <label class="field grow"><span>数え始める日</span><input name="since" type="date"></label>
+        <label class="field grow"><span>期日（任意）</span><input name="due" type="date"></label>
+      </div>
+      <p class="hint">数え始める日から今日までの「収入−支出」を、たまった額として数えます。前の日にすると、その日からの分も数えます。目標は1つだけ決められます。</p>
+      <div class="actions">${g ? '<button type="button" class="btn danger" data-act="delete">目標を終える</button>' : ""}<button type="submit" class="btn primary">${g ? "保存" : "決める"}</button></div>
+    </form></div>`);
+  wrap.querySelector(".icon-btn").addEventListener("click", closeSheet);
+  const f = wrap.querySelector("form");
+  const el = (n) => f.querySelector(`[name=${n}]`);
+  el("name").value = g ? g.name : "";
+  el("amount").value = g ? g.amount.toLocaleString("ja-JP") : "";
+  el("since").value = g ? g.since : today();
+  el("due").value = g?.due || "";
+  calcField(el("amount"));
+  f.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const name = el("name").value.trim();
+    const amount = evalAmount(el("amount").value);
+    const since = el("since").value, due = el("due").value;
+    if (!name) return toast("名前を入れてください");
+    if (amount == null) return toast("目標額を 1〜99,999,999 の数字で入れてください");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(since)) return toast("数え始める日を入れてください");
+    if (due && due < since) return toast("期日は数え始める日より後にしてください");
+    data.goal = { name, amount, since, due: due || null };
+    save(); closeSheet(); render();
+    toast(g ? "目標を直しました" : "目標を決めました");
+  });
+  if (g) f.querySelector("[data-act=delete]").addEventListener("click", () => {
+    if (!confirm(`「${g.name}」の目標を終えますか？（記録は消えません）`)) return;
+    data.goal = null;
+    save(); closeSheet(); render();
+    toast("目標を終えました");
+  });
+  openSheet(wrap);
 }
 
 // 固定費だけで見た収入・支出・差の1行
@@ -680,7 +852,7 @@ function renderBudgets(byCat) {
 }
 
 // 支出の内訳（ドーナツと表）と収入の内訳（表だけ）
-function renderBreakdown(list, t, byCat, periodName) {
+function renderBreakdown(list, t, byCat, periodName, prevByCat, prevName) {
   const dsec = h(`<section class="card"><h2>支出の内訳</h2></section>`);
   if (!t.expense) {
     dsec.appendChild(h(`<p class="muted">${periodName}の支出はありません。</p>`));
@@ -700,10 +872,16 @@ function renderBreakdown(list, t, byCat, periodName) {
     Charts.donut(chart, parts, "支出の合計");
     dsec.appendChild(h(`<p class="hint">グラフを押すと、その分類の金額が真ん中に出ます。</p>`));
     const legend = h(`<ul class="legend"></ul>`);
-    [...byCat.entries()].sort((a, b) => b[1] - a[1]).forEach(([id, v]) => {
-      legend.appendChild(h(`<li><span class="sw" style="background:${expenseColor(id)}"></span><span class="lg-name">${esc(catName("expense", id))}</span><span class="lg-amt">${yen(v)}</span><span class="lg-pct">${Math.round((v / t.expense) * 100)}%</span></li>`));
+    // 先月は使ったが今月は0円の分類も、減ったことが分かるよう後ろに出す
+    const rows = [...byCat.entries()].sort((a, b) => b[1] - a[1]);
+    for (const [id, v] of [...prevByCat.entries()].sort((a, b) => b[1] - a[1])) if (!byCat.has(id)) rows.push([id, 0]);
+    rows.forEach(([id, v]) => {
+      const d = v - (prevByCat.get(id) || 0);
+      const diff = `<span class="lg-diff${d > 0 ? " up" : ""}">${prevName}より ${d > 0 ? "+" : d < 0 ? "−" : "±"}${yen(Math.abs(d))}</span>`;
+      legend.appendChild(h(`<li><span class="sw" style="background:${expenseColor(id)}"></span><span class="lg-name">${esc(catName("expense", id))}${diff}</span><span class="lg-amt">${yen(v)}</span><span class="lg-pct">${Math.round((v / t.expense) * 100)}%</span></li>`));
     });
     dsec.appendChild(legend);
+    dsec.appendChild(h(`<p class="hint">分類名の下は${prevName}からの増減です（増えたものは赤）。</p>`));
   }
   view.appendChild(dsec);
 
@@ -1415,10 +1593,10 @@ function openTransfer(id, init) {
   const el = (n) => f.querySelector(`[name=${n}]`);
   el("amount").value = st.amount ? st.amount.toLocaleString("ja-JP") : "";
   el("from").value = st.from; el("to").value = st.to; el("date").value = st.date; el("memo").value = st.memo || "";
-  el("amount").addEventListener("input", () => { const n = parseAmount(el("amount").value); if (n != null) el("amount").value = n.toLocaleString("ja-JP"); });
+  calcField(el("amount"));
   f.addEventListener("submit", (ev) => {
     ev.preventDefault();
-    const amount = parseAmount(el("amount").value);
+    const amount = evalAmount(el("amount").value);
     if (amount == null) return toast("金額を 1〜99,999,999 の数字で入れてください");
     if (el("from").value === el("to").value) return toast("「どこから」と「どこへ」を別にしてください");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(el("date").value)) return toast("日付を入れてください");

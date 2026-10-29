@@ -119,6 +119,11 @@ main {
 .entry.is-income .amount { border-color: var(--income); }
 .amount input { flex: 1; min-width: 0; border: 0; background: none; font-size: 34px; font-weight: 700; text-align: right; padding: 4px 0; outline: none; font-variant-numeric: tabular-nums; }
 .amount span { font-size: 18px; color: var(--text2); }
+/* 金額欄の電卓（D42） */
+.calc { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin: -6px 0 10px; }
+.calc-out { flex: 1; text-align: right; font-size: 15px; font-weight: 600; color: var(--text2); font-variant-numeric: tabular-nums; }
+.calc-out.bad { color: var(--over); font-weight: 400; font-size: 13px; }
+.calc-op { width: 44px; height: 36px; border: 1px solid var(--line); background: var(--bg); border-radius: 9px; font-size: 20px; line-height: 1; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .chip {
   border: 1px solid var(--line); background: var(--bg); border-radius: 999px;
@@ -378,3 +383,33 @@ main {
 .bl-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 15px; }
 .bl-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
 .bill.paid .bl-top > span { color: var(--text2); }
+
+/* 貯金の目標（D39） */
+.card.goal { display: block; width: 100%; text-align: left; font: inherit; color: inherit; }
+.goal .g-name { font-weight: 600; }
+.goal.done .b-bar i { background: var(--series-3); }
+.g-plan { font-size: 14px; margin-top: 4px; }
+.g-plan.ok { color: var(--series-3); font-weight: 600; }
+.g-plan.warn { color: var(--over); }
+.g-note { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.goal-empty .link { padding: 0; font-weight: 600; }
+.goal-empty .hint { margin-bottom: 0; }
+
+/* 先月との比較（D41） */
+.legend .lg-name { display: flex; flex-direction: column; min-width: 0; }
+.lg-diff { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.lg-diff.up { color: var(--over); }
+
+/* カレンダー（D40） */
+.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 8px 6px; margin-bottom: 10px; }
+.cal-w { text-align: center; font-size: 12px; color: var(--muted); padding-bottom: 2px; }
+.cal-w.sun, .cal-d.sun .cal-n { color: var(--over); }
+.cal-w.sat, .cal-d.sat .cal-n { color: var(--income); }
+.cal-d { position: relative; display: flex; flex-direction: column; align-items: center; min-height: 48px; padding: 4px 0 2px; border: 1px solid transparent; border-radius: 8px; background: none; }
+.cal-d.today .cal-n { background: var(--text); color: var(--card); border-radius: 50%; width: 22px; height: 22px; line-height: 22px; }
+.cal-d.on { border-color: var(--accent); background: var(--track); }
+.cal-n { font-size: 13px; text-align: center; }
+.cal-x { font-size: 10px; color: var(--over); font-variant-numeric: tabular-nums; white-space: nowrap; letter-spacing: -0.02em; }
+.cal-inc { position: absolute; top: 5px; right: 4px; width: 5px; height: 5px; border-radius: 50%; background: var(--income); }
+.cal-none { margin: 4px 0 8px; font-size: 14px; }
+.cal-add { display: block; margin: 0 0 4px auto; }

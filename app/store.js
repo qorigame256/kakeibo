@@ -27,6 +27,7 @@ const Store = (() => {
       accounts: [], // 銀行口座とカード（仕様書 D36）
       transfers: [], // 口座と現金のあいだのお金の移動（支出・収入には数えない）
       bills: {}, // カードの引き落とし額を手で直したもの（"カードの id:引き落としの月" → 額）
+      goal: null, // 貯金の目標（仕様書 D39）。同時に1つだけ
       settings: { lastExport: null, nickname: "", myId: null, shareAmount: "hidden", skin: "basic", startedAt: null, backupAskedAt: null },
     };
   }
@@ -80,6 +81,7 @@ const Store = (() => {
         accounts: Array.isArray(d.accounts) ? d.accounts.filter(isAccount) : [],
         transfers: Array.isArray(d.transfers) ? d.transfers.filter(isTransfer) : [],
         bills: cleanBills(d.bills),
+        goal: cleanGoal(d.goal),
         settings: { ...base.settings, ...(d.settings || {}) },
       };
     } catch (e) {
@@ -219,6 +221,8 @@ const Store = (() => {
       trIds.add(t.id);
     }
     for (const [k, v] of Object.entries(cleanBills(incoming.bills))) if (data.bills[k] == null) data.bills[k] = v;
+    // 貯金の目標は1つだけなので、今決めていないときだけ入れる
+    if (!data.goal) data.goal = cleanGoal(incoming.goal);
     return result;
   }
 
@@ -234,6 +238,12 @@ const Store = (() => {
   function isTransfer(t) {
     return t && typeof t.id === "string" && isDate(t.date) && isAmount(t.amount) &&
       typeof t.from === "string" && typeof t.to === "string" && t.from !== t.to;
+  }
+  // 貯金の目標：name＝名前、amount＝目標額、since＝数え始める日、due＝期日（無ければ null）
+  function cleanGoal(g) {
+    if (!g || typeof g.name !== "string" || !g.name || !isAmount(g.amount) || !isDate(g.since)) return null;
+    if (g.due != null && (!isDate(g.due) || g.due < g.since)) return null;
+    return { name: g.name.slice(0, 20), amount: g.amount, since: g.since, due: g.due || null };
   }
   function cleanBills(b) {
     const out = {};
