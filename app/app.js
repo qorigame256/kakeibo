@@ -121,12 +121,16 @@ function expenseColor(id) {
 }
 
 // ---------- タブの切り替え ----------
+// 設定タブは長いので、ほかのタブから戻ってきたら離れたときの位置へ戻す（アプリを開き直したら先頭から）
+let settingsScrollY = 0;
 document.querySelectorAll(".tabs button").forEach((b) => {
   b.addEventListener("click", () => {
     if (!data) return; // 読み込みが済む前
+    const from = tab;
+    if (from === "settings") settingsScrollY = window.scrollY;
     tab = b.dataset.tab;
     render();
-    window.scrollTo(0, 0);
+    window.scrollTo(0, tab === "settings" && from !== "settings" ? settingsScrollY : 0);
   });
 });
 
